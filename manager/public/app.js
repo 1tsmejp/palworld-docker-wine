@@ -1164,6 +1164,9 @@ function drawModResults(s) {
         ? `${r.packageName || r.installed} via the official mod system`
         : (r.files || []).join(', ');
       toast(`Installed ${what} — review & deploy to activate`, 'ok');
+      if (r.missingDependencies && r.missingDependencies.length) {
+        toast(`⚠ This mod requires: ${r.missingDependencies.join(', ')} — search the Workshop for them and install them too, or it will not run.`, 'err');
+      }
       loadInstalledMods(s);
       refreshServers();
     } catch (e) { toast('Install failed: ' + e.message, 'err'); }

@@ -389,8 +389,19 @@ async function installFromWorkshop(server, publishedFileId) {
   const infoJson = infoOut.trim();
   if (modPlatform(server) === 'windows' && infoJson) {
     const modRoot = infoJson.replace(/\/Info\.json$/, '');
-    let packageName = null;
-    try { packageName = JSON.parse(await dockerctl.exec(c, ['cat', infoJson])).PackageName || null; } catch { /* ignore */ }
+    let packageName = null, dependencies = [];
+    try {
+      const info = JSON.parse(await dockerctl.exec(c, ['cat', infoJson]));
+      packageName = info.PackageName || null;
+      dependencies = Array.isArray(info.Dependencies) ? info.Dependencies : [];
+    } catch { /* ignore */ }
+    // Loader runtimes (UE4SS/PalSchema) are Workshop items themselves — on a
+    // dedicated server they must be installed explicitly. Flag missing ones.
+    const reg0 = readRegistry();
+    const installedPkgs = new Set(Object.entries(reg0)
+      .filter(([k]) => k.startsWith(`${server.id}:official:`))
+      .map(([, v]) => v.packageName).filter(Boolean));
+    const missingDependencies = dependencies.filter((dep) => !installedPkgs.has(dep));
     const destDir = `${OFFICIAL_MODS_DIR}/Workshop/${publishedFileId}`;
     await dockerctl.exec(c, ['sh', '-c', `rm -rf ${q(destDir)} && mkdir -p ${q(destDir)} && cp -r ${q(modRoot)}/. ${q(destDir)}/ && rm -rf '${tmp}'`]);
     const ini = `${OFFICIAL_MODS_DIR}/PalModSettings.ini`;
@@ -408,7 +419,7 @@ async function installFromWorkshop(server, publishedFileId) {
     writeRegistry(reg);
     syncWorkshopModsEnv(server, publishedFileId, true);
     logModChange(server, 'install', publishedFileId, detail && detail.title, 'official');
-    return { installed: publishedFileId, kind: 'official', packageName, restartRequired: true };
+    return { installed: publishedFileId, kind: 'official', packageName, dependencies, missingDependencies, restartRequired: true };
   }
 
   const found = await dockerctl.exec(c, ['sh', '-c', `find '${tmp}' -type f \\( -name '*.pak' -o -name '*.utoc' -o -name '*.ucas' \\) 2>/dev/null`]);

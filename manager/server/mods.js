@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { dockerctl } = require('./dockerctl');
-const { readEnv } = require('./compose');
+const { readEnv, updateEnv } = require('./compose');
 const { DATA_DIR } = require('./config');
 const { getSecrets, setSecrets } = require('./secrets');
 
@@ -30,6 +30,24 @@ const OFFICIAL_MODS_DIR = '/palworld/Pal/Binaries/Win64/Mods';
  */
 function modPlatform(server) {
   return server.flavor === 'wine' || server.modPlatform === 'windows' ? 'windows' : 'linux';
+}
+
+/**
+ * Keep the WORKSHOP_MODS env (comma-separated workshop IDs) in the compose
+ * file in sync with installs/removals — the Wine image installs any missing
+ * listed mods at boot, so the mod set is declarative and survives volume
+ * resets (ripps818-style env-driven mod patching).
+ */
+function syncWorkshopModsEnv(server, id, add) {
+  if (modPlatform(server) !== 'windows') return;
+  try {
+    const env = readEnv(server.composeFile, server.serviceName);
+    const list = String(env.WORKSHOP_MODS || '').split(',').map((x) => x.trim()).filter(Boolean);
+    const sid = String(id);
+    if (add && !list.includes(sid)) list.push(sid);
+    if (!add && list.includes(sid)) list.splice(list.indexOf(sid), 1);
+    updateEnv(server.composeFile, server.serviceName, { WORKSHOP_MODS: list.length ? list.join(',') : null });
+  } catch { /* best effort */ }
 }
 
 const SORTS = { trend: 'trend', mostrecent: 'mostrecent', lastupdated: 'lastupdated', subscribers: 'totaluniquesubscribers' };
@@ -162,12 +180,30 @@ function steamCreds(server) {
 }
 
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
-// DepotDownloader caches its Steam auth token in ~/.config/DepotDownloader —
-// wiped when the game container is recreated. Persist it under /palworld.
+// DepotDownloader stores its auth tokens via .NET IsolatedStorage
+// ($HOME/.local/share/IsolatedStorage/**/account.config) — wiped when the
+// game container is recreated. Persist the whole tree under /palworld.
 const ACCT_SAVE = '/palworld/.depotdownloader';
-const ACCT_LIVE = '$HOME/.config/DepotDownloader';
-const restoreAcct = `mkdir -p ${ACCT_LIVE} && cp -f ${ACCT_SAVE}/* ${ACCT_LIVE}/ 2>/dev/null; true`;
-const persistAcct = `mkdir -p ${ACCT_SAVE} && cp -f ${ACCT_LIVE}/*.config ${ACCT_SAVE}/ 2>/dev/null; true`;
+const restoreAcct = `mkdir -p "$HOME/.local/share" && if [ -d ${ACCT_SAVE}/IsolatedStorage ]; then rm -rf "$HOME/.local/share/IsolatedStorage" && cp -r ${ACCT_SAVE}/IsolatedStorage "$HOME/.local/share/"; fi; true`;
+const persistAcct = `if [ -d "$HOME/.local/share/IsolatedStorage" ]; then mkdir -p ${ACCT_SAVE} && rm -rf ${ACCT_SAVE}/IsolatedStorage && cp -r "$HOME/.local/share/IsolatedStorage" ${ACCT_SAVE}/; fi; true`;
+
+/** Read the signed-in Steam account name from DepotDownloader's stored tokens. */
+async function readStoredSteamUsername(server) {
+  try {
+    const raw = await dockerctl.exec(server.containerName,
+      ['sh', '-c', `cat $(find ${ACCT_SAVE}/IsolatedStorage "$HOME/.local/share/IsolatedStorage" -name account.config 2>/dev/null | head -1) 2>/dev/null`]);
+    if (!raw.trim()) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      const keys = Object.keys(parsed.LoginTokens || {}).concat(Object.keys(parsed.GuardData || {}));
+      if (keys.length) return keys[keys.length - 1];
+    } catch {
+      const m = raw.match(/"LoginTokens"\s*:\s*\{\s*"([^"]+)"/);
+      if (m) return m[1];
+    }
+  } catch { /* absent */ }
+  return null;
+}
 
 /**
  * Run DepotDownloader with credentials; guardCode (Steam Guard email/2FA code)
@@ -239,16 +275,13 @@ function startQrLogin(server) {
     clearTimeout(timer);
     if (sess.status === 'expired') return;
     if (code === 0 || /Done!/.test(sess.output)) {
-      // Username fallback: read it from DepotDownloader's account config
+      // Username fallback: read it from DepotDownloader's stored tokens
+      if (!sess.username) sess.username = await readStoredSteamUsername(server);
       if (!sess.username) {
-        try {
-          const cfg = await dockerctl.exec(server.containerName, ['sh', '-c', `cat ${ACCT_SAVE}/account.config 2>/dev/null || cat $HOME/.config/DepotDownloader/account.config 2>/dev/null`]);
-          const parsed = JSON.parse(cfg);
-          const keys = Object.keys(parsed.LoginTokens || parsed.GuardData || {});
-          if (keys.length) sess.username = keys[keys.length - 1];
-        } catch { /* keep fallback */ }
+        sess.status = 'failed';
+        sess.error = 'Signed in, but could not determine the Steam account name (no stored token found) — please try again.';
+        return;
       }
-      sess.username = sess.username || 'steam-account';
       if (/not available from this account/i.test(sess.output)) {
         sess.status = 'failed';
         sess.error = `Signed in as ${sess.username}, but this account does not own Palworld — Workshop downloads require ownership.`;
@@ -315,6 +348,9 @@ async function installFromWorkshop(server, publishedFileId) {
   const { code, output } = await runDepotDownloader(server, `-app ${APPID} -pubfile ${publishedFileId} -dir '${tmp}'`, creds);
   if (code !== 0) {
     await dockerctl.exec(c, ['sh', '-c', `rm -rf '${tmp}'`]).catch(() => {});
+    if (/Aborted|ThreadPool|password:/i.test(output || '')) {
+      throw Object.assign(new Error('Steam sign-in token is missing or expired for this server — open Mods → Accounts and sign in again (QR is easiest), then retry the install.'), { status: 400 });
+    }
     const tail = (output || '').split('\n').filter(Boolean).slice(-3).join(' | ');
     const hint = /STEAM GUARD/i.test(output) ? ' Steam Guard triggered — re-verify the login under Mods → Accounts with a fresh code.' : '';
     throw Object.assign(new Error(`Workshop download failed: ${tail}.${hint}`), { status: 502 });
@@ -343,6 +379,7 @@ async function installFromWorkshop(server, publishedFileId) {
       installedAt: new Date().toISOString(),
     };
     writeRegistry(reg);
+    syncWorkshopModsEnv(server, publishedFileId, true);
     return { installed: publishedFileId, kind: 'official', packageName, restartRequired: true };
   }
 
@@ -365,6 +402,7 @@ async function installFromWorkshop(server, publishedFileId) {
     files: pakFiles.map((f) => path.basename(f)),
   };
   writeRegistry(reg);
+  syncWorkshopModsEnv(server, publishedFileId, true);
   return { installed: publishedFileId, kind: 'pak', files: pakFiles.map((f) => path.basename(f)), restartRequired: true };
 }
 
@@ -405,6 +443,7 @@ async function removeMod(server, dir, kind = 'pak') {
     delete reg[`${server.id}:${safe}`];
   }
   writeRegistry(reg);
+  if (/^\d+$/.test(safe)) syncWorkshopModsEnv(server, safe, false);
   return { removed: safe, restartRequired: true };
 }
 

@@ -121,6 +121,62 @@ if [ ! -f "$EXE_DIR/Mods/PalModSettings.ini" ]; then
 fi
 ln -sfn "$EXE_DIR/Mods" "$SERVER_DIR/Mods" || true
 
+# ---------------------------------------------------------------- env-driven mods
+# WORKSHOP_MODS: comma-separated Steam Workshop IDs installed at boot if
+# missing (declarative, ripps818-style). Requires a Steam auth token stored
+# by a prior sign-in (persisted at /palworld/.depotdownloader).
+if [ -n "${WORKSHOP_MODS:-}" ]; then
+  if [ -d /palworld/.depotdownloader/IsolatedStorage ]; then
+    mkdir -p "$HOME/.local/share"
+    rm -rf "$HOME/.local/share/IsolatedStorage"
+    cp -r /palworld/.depotdownloader/IsolatedStorage "$HOME/.local/share/"
+  fi
+  ACCT_FILE=$(find "$HOME/.local/share/IsolatedStorage" -name account.config 2>/dev/null | head -1 || true)
+  SUSER=""
+  if [ -n "$ACCT_FILE" ]; then
+    SUSER=$(sed -n 's/.*"LoginTokens"[^{]*{[^"]*"\([^"]*\)".*/\1/p' "$ACCT_FILE" | head -1)
+  fi
+  for MODID in $(echo "$WORKSHOP_MODS" | tr ',' ' '); do
+    if [ -d "$EXE_DIR/Mods/Workshop/$MODID" ] || [ -d "$SERVER_DIR/Pal/Content/Paks/~mods/$MODID" ]; then
+      continue
+    fi
+    if [ -z "$SUSER" ]; then
+      log "WORKSHOP_MODS: no stored Steam token — cannot install $MODID (sign in via the manager once)"
+      continue
+    fi
+    log "WORKSHOP_MODS: installing $MODID…"
+    TMPD="/tmp/wsmod-$MODID"
+    rm -rf "$TMPD"
+    if DepotDownloader -app 1623730 -pubfile "$MODID" -username "$SUSER" -remember-password -dir "$TMPD" >/dev/null 2>&1; then
+      INFO=$(find "$TMPD" -maxdepth 4 -name Info.json 2>/dev/null | head -1 || true)
+      if [ -n "$INFO" ]; then
+        DEST="$EXE_DIR/Mods/Workshop/$MODID"
+        mkdir -p "$DEST" && cp -r "$(dirname "$INFO")/." "$DEST/"
+        PKG=$(sed -n 's/.*"PackageName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$INFO" | head -1)
+        INIF="$EXE_DIR/Mods/PalModSettings.ini"
+        touch "$INIF"
+        if ! grep -q "bGlobalEnableMod=" "$INIF"; then echo "bGlobalEnableMod=True" >> "$INIF"; fi
+        if [ -n "$PKG" ] && ! grep -q "ActiveModList=$PKG" "$INIF"; then echo "ActiveModList=$PKG" >> "$INIF"; fi
+        log "WORKSHOP_MODS: installed official mod $MODID (${PKG:-no PackageName})"
+      else
+        DEST="$SERVER_DIR/Pal/Content/Paks/~mods/$MODID"
+        mkdir -p "$DEST"
+        find "$TMPD" -type f \( -name '*.pak' -o -name '*.utoc' -o -name '*.ucas' \) -exec mv {} "$DEST/" \;
+        log "WORKSHOP_MODS: installed pak mod $MODID"
+      fi
+    else
+      log "WORKSHOP_MODS: download failed for $MODID (token expired? re-sign-in via manager)"
+    fi
+    rm -rf "$TMPD"
+  done
+  # persist any refreshed tokens
+  if [ -d "$HOME/.local/share/IsolatedStorage" ]; then
+    mkdir -p /palworld/.depotdownloader
+    rm -rf /palworld/.depotdownloader/IsolatedStorage
+    cp -r "$HOME/.local/share/IsolatedStorage" /palworld/.depotdownloader/
+  fi
+fi
+
 # ---------------------------------------------------------------- run under wine
 cleanup() { log "SIGTERM — stopping wine…"; wineserver -k || true; wait; exit 0; }
 trap cleanup SIGTERM SIGINT

@@ -94,11 +94,76 @@ function renderSidebar() {
         <span class="dot ${on ? 'on' : s.container.status === 'running' ? '' : 'off'}"></span>
         <div>
           <div>${esc(s.name)}</div>
-          <div class="meta">${on ? `${s.metrics?.currentplayernum ?? '?'}/${s.metrics?.maxplayernum ?? '?'} players` : esc(s.container.status)}</div>
+          <div class="meta">${on ? `${s.metrics?.currentplayernum ?? '?'}/${s.metrics?.maxplayernum ?? '?'} players` : s.container.status === 'missing' ? 'not launched' : esc(s.container.status)}</div>
         </div>
       </div>`;
   }).join('');
+  $('#server-list').insertAdjacentHTML('beforeend',
+    '<button class="btn ghost small" id="add-server" style="width:100%;margin-top:6px">＋ Add server</button>');
   $$('.srv-item').forEach((el) => el.onclick = () => selectServer(el.dataset.id));
+  $('#add-server').onclick = addServerWizard;
+}
+
+function addServerWizard() {
+  const root = $('#modal-root');
+  root.innerHTML = `
+    <div class="modal-back"><div class="modal">
+      <h3>Add a new Palworld server</h3>
+      <p class="muted" style="font-size:.78rem;margin-bottom:12px">
+        Creates the server's docker stack and registers it here — it is <b>not started</b> yet.
+        You can tune every world setting in the Settings tab first, then press <b>Launch</b>.
+      </p>
+      <div class="deploy-cols">
+        <div>
+          <div class="field"><label>Server ID (short, lowercase)</label><input type="text" id="ns-id" placeholder="e.g. events"></div>
+          <div class="field"><label>Display name</label><input type="text" id="ns-name" placeholder="Events Server"></div>
+          <div class="field"><label>Server type</label>
+            <select id="ns-flavor">
+              <option value="native">Native Linux (thijsvanloef image — pak mods only)</option>
+              <option value="wine">Windows build under Wine (full mod support)</option>
+            </select></div>
+          <div class="field"><label>Game port (UDP)</label><input type="text" id="ns-gameport" value=""></div>
+          <div class="field"><label>REST API port (TCP, LAN only)</label><input type="text" id="ns-restport" value=""></div>
+        </div>
+        <div>
+          <div class="field"><label>In-game server name</label><input type="text" id="ns-sname"></div>
+          <div class="field"><label>Description</label><input type="text" id="ns-sdesc"></div>
+          <div class="field"><label>Join password (empty = open)</label><input type="text" id="ns-spass"></div>
+          <div class="field"><label>Admin password (min 8 chars, required)</label><input type="text" id="ns-apass"></div>
+          <div class="field"><label>Max players</label><input type="text" id="ns-players" value="16"></div>
+          <div class="field"><label><input type="checkbox" id="ns-community"> List in community server browser</label></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" id="ns-cancel">Cancel</button>
+        <button class="btn primary" id="ns-create">Create server</button>
+      </div>
+    </div></div>`;
+  // suggest free ports
+  const used = state.servers.flatMap((s) => [s.gamePort, s.restPort]).filter(Boolean).concat([8211, 8212, 8311, 8312, 8220]);
+  let gp = 8411; while (used.includes(gp)) gp += 100;
+  $('#ns-gameport').value = gp;
+  $('#ns-restport').value = gp + 1;
+  $('#ns-cancel').onclick = () => { root.innerHTML = ''; };
+  $('#ns-create').onclick = async () => {
+    const body = {
+      id: $('#ns-id').value.trim(), name: $('#ns-name').value.trim(),
+      flavor: $('#ns-flavor').value,
+      gamePort: $('#ns-gameport').value, restPort: $('#ns-restport').value,
+      serverName: $('#ns-sname').value.trim() || $('#ns-name').value.trim(),
+      serverDescription: $('#ns-sdesc').value.trim(),
+      serverPassword: $('#ns-spass').value, adminPassword: $('#ns-apass').value,
+      players: $('#ns-players').value, community: $('#ns-community').checked,
+    };
+    $('#ns-create').disabled = true;
+    try {
+      const entry = await api('/servers', { method: 'POST', body });
+      root.innerHTML = '';
+      toast(`Server "${entry.id}" created — configure it, then press Launch`, 'ok');
+      await refreshServers();
+      selectServer(entry.id);
+    } catch (e) { $('#ns-create').disabled = false; toast(e.message, 'err'); }
+  };
 }
 
 function selectServer(id) {
@@ -145,6 +210,46 @@ function renderView() {
 
 // ---------------------------------------------------------------- overview
 async function renderOverview(v, s) {
+  if (s.container.status === 'missing' || s.container.status === 'exited') {
+    const fresh = s.container.status === 'missing';
+    v.innerHTML = `
+      <div class="card" style="text-align:center;padding:40px">
+        <h3 style="margin-bottom:10px">${fresh ? '🚀 This server has not been launched yet' : '⏹ Server is stopped'}</h3>
+        <p class="muted" style="margin-bottom:18px;font-size:.85rem">
+          ${fresh
+            ? 'Its configuration lives in the compose stack — review the <b>Settings</b> tab first (everything is editable before first boot), then launch. First boot downloads the game server (~6 GB) and can take several minutes.'
+            : 'The container exists but is not running.'}
+        </p>
+        <button class="btn primary" id="launch-server">${fresh ? '🚀 Launch server' : '▶ Start server'}</button>
+        ${s.provisioned && fresh ? '<button class="btn ghost small" id="unregister-server" style="margin-left:10px">Unregister</button>' : ''}
+      </div>`;
+    $('#launch-server').onclick = async () => {
+      const btn = $('#launch-server');
+      btn.disabled = true; btn.textContent = 'Starting…';
+      try {
+        const r = await api(`/servers/${s.id}/start`, { method: 'POST', body: {} });
+        toast(r.note || 'Starting…', 'ok');
+        setTimeout(refreshServers, 4000);
+      } catch (e) { btn.disabled = false; toast('Start failed: ' + e.message, 'err'); }
+    };
+    const unreg = $('#unregister-server');
+    if (unreg) unreg.onclick = async () => {
+      const ok = await confirmModal({
+        title: `Unregister "${s.name}"?`,
+        body: '<p>Removes it from the manager. The stack files and any data volume are kept on disk.</p>',
+        confirmText: 'Unregister', danger: true,
+      });
+      if (!ok) return;
+      try {
+        await api(`/servers/${s.id}`, { method: 'DELETE' });
+        toast('Server unregistered', 'ok');
+        state.serverId = null;
+        await refreshServers();
+        renderView();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    return;
+  }
   const m = s.metrics;
   v.innerHTML = `
     <div class="stat-grid">

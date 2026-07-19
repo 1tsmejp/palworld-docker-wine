@@ -11,5 +11,6 @@
       "apiUrl": "http://palworld-wine:8212",
       "flavor": "wine"
     }
-  ]
+  ],
+  "hostAddress": "host.docker.internal"
 }

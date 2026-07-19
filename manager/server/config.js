@@ -15,6 +15,10 @@ function loadServers() {
   return readJson('servers.json');
 }
 
+function saveServers(data) {
+  fs.writeFileSync(path.join(CONFIG_DIR, 'servers.json'), JSON.stringify(data, null, 2));
+}
+
 function loadSchema() {
   return readJson('settings-schema.json');
 }
@@ -45,4 +49,4 @@ function readHistory(kind, limit = 50) {
   return lines.slice(-limit).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean).reverse();
 }
 
-module.exports = { CONFIG_DIR, DATA_DIR, loadServers, loadSchema, loadCannedMessages, saveCannedMessages, getServer, appendHistory, readHistory };
+module.exports = { CONFIG_DIR, DATA_DIR, loadServers, saveServers, loadSchema, loadCannedMessages, saveCannedMessages, getServer, appendHistory, readHistory };

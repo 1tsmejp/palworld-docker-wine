@@ -47,6 +47,10 @@ services:
       - ./:/stacks/palworld
       - ./manager/config:/app/config
       - manager_data:/app/data
+      # UI-provisioned server stacks are created here
+      - ./stacks:/stacks/managed
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # lets the manager reach provisioned servers' REST ports
 
 volumes:
   palworld_data:

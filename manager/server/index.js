@@ -30,6 +30,32 @@ const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
   res.status(e.status || 500).json({ error: e.message, details: e.details });
 });
 
+// ---- server provisioning ----------------------------------------------------
+const provision = require('./provision');
+
+// Create a new managed server: writes its compose stack + registers it. The
+// server is NOT started — configure it in Settings, then hit Launch.
+app.post('/api/servers', wrap(async (req, res) => {
+  const entry = provision.createServer(req.body || {});
+  appendHistory('provisioning', { action: 'create', serverId: entry.id, flavor: entry.flavor });
+  res.status(201).json(entry);
+}));
+
+// Unregister (files/volumes kept unless ?destroy=1 and the stack was created here)
+app.delete('/api/servers/:id', wrap(async (req, res) => {
+  const result = provision.removeServer(req.params.id, { destroyFiles: req.query.destroy === '1' });
+  appendHistory('provisioning', { action: 'remove', serverId: req.params.id, destroyed: result.filesDestroyed });
+  res.json(result);
+}));
+
+// First launch / start after stop: compose up (creates the container).
+app.post('/api/servers/:id/start', wrap(async (req, res) => {
+  const server = getServer(req.params.id);
+  await dockerctl.composeUp(server, false);
+  appendHistory('provisioning', { action: 'start', serverId: server.id });
+  res.json({ ok: true, note: 'starting — first boot downloads the game server, which can take several minutes' });
+}));
+
 // ---- servers & live status --------------------------------------------------
 app.get('/api/servers', wrap(async (req, res) => {
   const { servers } = loadServers();
@@ -49,7 +75,11 @@ app.get('/api/servers', wrap(async (req, res) => {
       }
     }
     const pendingMods = mods.pendingModChanges(s, state.startedAt);
-    return { id: s.id, name: s.name, container: state, info, metrics, paused, apiUrl: s.apiUrl, pendingModChanges: pendingMods.length };
+    return {
+      id: s.id, name: s.name, container: state, info, metrics, paused, apiUrl: s.apiUrl,
+      pendingModChanges: pendingMods.length,
+      flavor: s.flavor || 'thijsvanloef', provisioned: Boolean(s.provisioned), gamePort: s.gamePort,
+    };
   }));
   res.json(out);
 }));

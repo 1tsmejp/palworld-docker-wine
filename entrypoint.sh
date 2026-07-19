@@ -126,10 +126,30 @@ cleanup() { log "SIGTERM — stopping wine…"; wineserver -k || true; wait; exi
 trap cleanup SIGTERM SIGINT
 
 WINE_BIN=$(command -v wine64 || command -v wine)
-# Run the shipping binary directly — the PalServer.exe launcher stub hangs
-# under Wine without ever spawning it.
-log "Starting PalServer-Win64-Shipping under Wine ($WINE_BIN, xvfb)…"
+
+# Persistent virtual display (matches ripps818's proven setup)
+log "Starting Xvfb on $DISPLAY…"
+Xvfb "$DISPLAY" -ac -nolisten tcp -screen 0 640x480x8 &
+
+# One-time wine prefix init + real MSVC 2022 runtime. Wine's built-in CRT is
+# incomplete — without vcrun2022 Palworld's save pipeline fails ("Failed to
+# save. Failed copy from backup.") and player logins break.
+if [ ! -d "$WINEPREFIX" ]; then
+  log "Initializing Wine prefix…"
+  wineboot --init && wineserver -w
+fi
+if [ ! -f "$WINEPREFIX/.vcrun2022.done" ]; then
+  log "Installing Visual C++ 2022 runtime via winetricks…"
+  winetricks --optout -f -q vcrun2022 && touch "$WINEPREFIX/.vcrun2022.done"
+fi
+
+# Launch the CONSOLE build (-Cmd) — the windowed shipping exe and the
+# PalServer.exe launcher stub both misbehave under Wine.
+GAME_BIN="$EXE_DIR/PalServer-Win64-Shipping-Cmd.exe"
+START_OPTIONS=(-useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS)
+if [ "${COMMUNITY,,}" = "true" ]; then START_OPTIONS+=(-publiclobby); fi
+log "Starting $GAME_BIN under Wine…"
 cd "$SERVER_DIR"
-xvfb-run -a "$WINE_BIN" "$EXE_DIR/PalServer-Win64-Shipping.exe" Pal -port=8211 -publicport=${PUBLIC_PORT:-8211} &
+"$WINE_BIN" "$GAME_BIN" "${START_OPTIONS[@]}" &
 SERVER_PID=$!
 wait $SERVER_PID

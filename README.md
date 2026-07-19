@@ -46,16 +46,23 @@ world generation); subsequent boots are ~30 seconds.
 
 ## Hard-won Wine specifics (the reasons this image looks the way it does)
 
-1. **`PalServer.exe` is a launcher stub that hangs under Wine** without ever
-   starting the server. This image launches
-   `Pal/Binaries/Win64/PalServer-Win64-Shipping.exe` directly.
-2. **`USE_BACKUP_SAVE_DATA=False` is required.** Palworld's atomic save-backup
-   pipeline fails under Wine — the visible symptom is players being kicked at
-   character creation with `Failed to save. Failed copy from backup.` in the
-   logs, and a crash shortly after. Back up the `/palworld` volume externally instead.
-3. `winbind` is needed for Steam's NTLM auth (`ntlm_auth`), and modern Debian
-   ships the Wine binary as `wine` (there is no `wine64` command anymore).
-4. The Steam net library logs
+Several of these were learned the hard way, then confirmed against the working
+setup in [ripps818/docker-palworld-dedicated-server-wine](https://github.com/ripps818/docker-palworld-dedicated-server-wine)
+(credit where due):
+
+1. **Launch `PalServer-Win64-Shipping-Cmd.exe`** — the console build. The
+   `PalServer.exe` launcher stub hangs under Wine without ever starting the
+   server, and the windowed `PalServer-Win64-Shipping.exe` misbehaves
+   (save failures, broken logins).
+2. **`winetricks vcrun2022` is essential.** Wine's built-in C runtime is
+   incomplete; without the real Visual C++ 2022 runtime, Palworld's atomic
+   save pipeline fails (`Failed to save. Failed copy from backup.`, players
+   kicked at character creation, eventual crash).
+3. **WineHQ stable** (with recommends) rather than the distro's minimal wine.
+4. Multithread flags help dedicated servers:
+   `-useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS`.
+5. `winbind` is needed for Steam's NTLM auth (`ntlm_auth`).
+6. The Steam net library logs
    `Assertion Failed: CalcUnIPThisBox - GetAdaptersAddresses returned 13` at
    boot — harmless in practice.
 
@@ -92,4 +99,8 @@ production one. Issues and PRs welcome.
 
 - [thijsvanloef/palworld-server-docker](https://github.com/thijsvanloef/palworld-server-docker)
   for the environment-variable convention and settings template this image reuses.
-- The Wine and steamcmd projects.
+- [ripps818/docker-palworld-dedicated-server-wine](https://github.com/ripps818/docker-palworld-dedicated-server-wine)
+  for proving the working Wine recipe (vcrun2022, console binary, WineHQ stable)
+  that this image's Wine specifics are aligned with — if you want a
+  fuller-featured Wine image (webhooks, cron, backups), use theirs.
+- The Wine, winetricks and steamcmd projects.

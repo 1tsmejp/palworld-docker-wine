@@ -926,7 +926,7 @@ async function loadNexus(s) {
       b.disabled = true; b.textContent = 'Installing…';
       try {
         const r = await api(`/servers/${s.id}/nexus/install`, { method: 'POST', body: { id: b.dataset.nexusInstall } });
-        toast(`Installed ${r.files.join(', ')} — restart required`, 'ok');
+        toast(`Installed ${(r.files || [r.installed]).join(', ')} — restart required`, 'ok');
         loadInstalledMods(s);
       } catch (e) { toast('Install failed: ' + e.message, 'err'); }
       b.disabled = false; b.textContent = 'Install';
@@ -1028,7 +1028,10 @@ function drawModResults(s) {
     b.disabled = true; b.textContent = 'Installing…';
     try {
       const r = await api(`/servers/${s.id}/mods/install`, { method: 'POST', body: { id: b.dataset.install } });
-      toast(`Installed ${r.files.join(', ')} — restart required`, 'ok');
+      const what = r.kind === 'official'
+        ? `${r.packageName || r.installed} via the official mod system`
+        : (r.files || []).join(', ');
+      toast(`Installed ${what} — restart required`, 'ok');
       loadInstalledMods(s);
     } catch (e) { toast('Install failed: ' + e.message, 'err'); }
     b.disabled = false; b.textContent = 'Install';

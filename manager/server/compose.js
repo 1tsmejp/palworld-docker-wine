@@ -1,0 +1,99 @@
+const fs = require('fs');
+const path = require('path');
+const YAML = require('yaml');
+const { DATA_DIR } = require('./config');
+
+/**
+ * Comment-preserving editor for the docker-compose.yml of a Palworld stack.
+ * Supports both map-style (KEY: value) and list-style (- KEY=value)
+ * `environment` blocks.
+ */
+
+function loadDoc(composeFile) {
+  const text = fs.readFileSync(composeFile, 'utf8');
+  return YAML.parseDocument(text);
+}
+
+function envNode(doc, serviceName) {
+  const node = doc.getIn(['services', serviceName, 'environment']);
+  if (!node) throw new Error(`No environment block for service "${serviceName}"`);
+  return node;
+}
+
+/** Returns { KEY: stringValue } for the service's environment. */
+function readEnv(composeFile, serviceName) {
+  const doc = loadDoc(composeFile);
+  const node = envNode(doc, serviceName);
+  const out = {};
+  if (YAML.isMap(node)) {
+    for (const pair of node.items) {
+      out[String(pair.key)] = pair.value == null ? '' : String(pair.value);
+    }
+  } else if (YAML.isSeq(node)) {
+    for (const item of node.items) {
+      const s = String(item);
+      const i = s.indexOf('=');
+      if (i > 0) out[s.slice(0, i)] = s.slice(i + 1);
+    }
+  }
+  return out;
+}
+
+/**
+ * Applies { KEY: value } updates (value === null removes the key) to the
+ * compose file. Writes a timestamped backup first. Returns backup path.
+ */
+function updateEnv(composeFile, serviceName, updates) {
+  const text = fs.readFileSync(composeFile, 'utf8');
+  const doc = YAML.parseDocument(text);
+  const node = envNode(doc, serviceName);
+  const isMap = YAML.isMap(node);
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (isMap) {
+      if (value === null) {
+        node.delete(key);
+      } else {
+        // Keep everything as scalars; quote strings that YAML would mangle.
+        node.set(key, formatScalar(value));
+      }
+    } else {
+      const idx = node.items.findIndex((it) => String(it).startsWith(key + '='));
+      if (value === null) {
+        if (idx >= 0) node.items.splice(idx, 1);
+      } else if (idx >= 0) {
+        node.items[idx] = `${key}=${value}`;
+      } else {
+        node.add(`${key}=${value}`);
+      }
+    }
+  }
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = path.join(DATA_DIR, 'backups', `${path.basename(composeFile)}.${stamp}.bak`);
+  fs.copyFileSync(composeFile, backupPath);
+  fs.writeFileSync(composeFile, doc.toString());
+  pruneBackups(path.basename(composeFile));
+  return backupPath;
+}
+
+function formatScalar(value) {
+  // Booleans are written as quoted "True"/"False" strings — the convention the
+  // image README documents for PalWorldSettings values — so YAML/compose never
+  // re-types them (https://github.com/thijsvanloef/palworld-server-docker#editing-server-settings).
+  if (typeof value === 'boolean') return value ? 'True' : 'False';
+  if (typeof value === 'number') return value;
+  const s = String(value);
+  if (/^(true|false)$/i.test(s)) return /^true$/i.test(s) ? 'True' : 'False';
+  if (/^-?\d+$/.test(s) && String(parseInt(s, 10)) === s) return parseInt(s, 10);
+  if (/^-?\d*\.\d+$/.test(s)) return parseFloat(s);
+  return s;
+}
+
+function pruneBackups(baseName, keep = 30) {
+  const dir = path.join(DATA_DIR, 'backups');
+  const files = fs.readdirSync(dir).filter((f) => f.startsWith(baseName)).sort();
+  while (files.length > keep) fs.unlinkSync(path.join(dir, files.shift()));
+}
+
+module.exports = { readEnv, updateEnv };

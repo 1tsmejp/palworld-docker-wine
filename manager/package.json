@@ -1,0 +1,15 @@
+{
+  "name": "palworld-manager",
+  "version": "0.1.0",
+  "description": "Web UI manager for Palworld dedicated servers running in Docker (thijsvanloef/palworld-server-docker)",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "generate-schema": "node tools/generate-schema.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "express": "^4.21.2",
+    "yaml": "^2.7.0"
+  }
+}

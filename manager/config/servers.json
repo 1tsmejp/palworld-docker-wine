@@ -1,0 +1,14 @@
+{
+  "managerPort": 8220,
+  "servers": [
+    {
+      "id": "palworld-wine",
+      "name": "Palworld (Wine)",
+      "composeFile": "/stacks/palworld/docker-compose.yml",
+      "composeProject": "palworld-wine",
+      "serviceName": "palworld-wine",
+      "containerName": "palworld-wine",
+      "apiUrl": "http://palworld-wine:8212"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "announcements": [
+    "Welcome! Check our community channels for server news.",
+    "Server maintenance is planned soon — watch for announcements here.",
+    "Autosave is enabled — your progress is safe."
+  ],
+  "rebootCountdown": [
+    "SERVER RESTART in {time} — settings update incoming. Get somewhere safe!",
+    "Server restarting in {time} for maintenance. World will be saved first!"
+  ],
+  "rebootComplete": [
+    "Server is back online — settings applied. Happy hunting!",
+    "Maintenance complete. Welcome back!"
+  ]
+}

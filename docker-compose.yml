@@ -1,3 +1,5 @@
+name: palworld-wine
+
 services:
   palworld-wine:
     build: .
@@ -26,5 +28,26 @@ services:
     volumes:
       - palworld_data:/palworld
 
+  # Web UI manager: settings editor with validation, announcements, deploy
+  # pipeline with countdown + validation, backups, world save export/import/
+  # migrate, Steam Workshop mod browser. See manager/config/servers.json.
+  manager:
+    build: ./manager
+    image: palworld-wine-manager:latest
+    container_name: palworld-wine-manager
+    restart: unless-stopped
+    ports:
+      - "8220:8220"
+    environment:
+      # Basic-auth password for the web UI (any username). CHANGE THIS.
+      MANAGER_PASSWORD: "CHANGE_ME_ADMIN"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # This repo dir (so the manager can read/update this compose file's env)
+      - ./:/stacks/palworld
+      - ./manager/config:/app/config
+      - manager_data:/app/data
+
 volumes:
   palworld_data:
+  manager_data:

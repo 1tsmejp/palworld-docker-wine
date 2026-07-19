@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Palworld Manager</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand">
+      <div class="brand-icon">P</div>
+      <div><div class="brand-name">Palworld</div><div class="brand-sub">Server Manager</div></div>
+    </div>
+    <div id="server-list"></div>
+    <div class="sidebar-foot">palworld-manager v0.1</div>
+  </aside>
+  <main id="main">
+    <header id="topbar">
+      <div>
+        <h1 id="srv-title">—</h1>
+        <div id="srv-badges" class="badges"></div>
+      </div>
+      <nav id="tabs">
+        <button data-tab="overview" class="tab active">Overview</button>
+        <button data-tab="settings" class="tab">Settings</button>
+        <button data-tab="announce" class="tab">Announce</button>
+        <button data-tab="deploy" class="tab">Deploy <span id="pending-pill" class="pill hidden">0</span></button>
+        <button data-tab="mods" class="tab">Mods</button>
+        <button data-tab="backups" class="tab">Backups</button>
+        <button data-tab="logs" class="tab">Logs</button>
+      </nav>
+    </header>
+    <section id="view"></section>
+  </main>
+</div>
+<div id="toast-box"></div>
+<div id="modal-root"></div>
+<script src="app.js"></script>
+</body>
+</html>

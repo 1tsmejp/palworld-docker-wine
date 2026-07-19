@@ -19,14 +19,31 @@ instructions at near-native speed; Windows API calls are translated to Linux sys
 
 ```bash
 git clone <this repo> && cd palworld-docker-wine
-# edit docker-compose.yml: set SERVER_PASSWORD and ADMIN_PASSWORD
+# edit docker-compose.yml: set SERVER_PASSWORD, ADMIN_PASSWORD and MANAGER_PASSWORD
 docker compose up -d --build
 docker logs -f palworld-wine     # first boot downloads ~6 GB via steamcmd
 ```
 
 The game listens on `8211/udp`, the REST API on `8212/tcp` (basic auth: `admin` /
 `ADMIN_PASSWORD`). First boot takes a few minutes (Steam download + Wine prefix +
-world generation); subsequent boots are ~30 seconds.
+vcrun2022 install + world generation); subsequent boots are ~30 seconds.
+
+## Bundled web manager
+
+`docker compose up` also starts a **server manager UI** on
+[http://localhost:8220](http://localhost:8220) (basic auth, any username,
+password = `MANAGER_PASSWORD` from the compose file):
+
+- live dashboard (players, FPS, uptime) via the game's REST API
+- full settings editor (all `PalWorldSettings.ini` values, min/max validated)
+  writing to this compose file's environment, with config-drift detection
+- announcements with canned messages; deploy pipeline with countdown
+  announcements, world save, recreate, and post-restart validation
+- backups (list/create/download) and **world save export / import / migrate**
+  (optionally assigning a fresh world GUID and stripping `WorldOption.sav`)
+- Steam Workshop mod browser with Linux/Windows type filtering and installs
+
+Don't want it? `docker compose up -d palworld-wine` starts just the game server.
 
 ## How it works
 

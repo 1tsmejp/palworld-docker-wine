@@ -187,20 +187,29 @@ const ACCT_SAVE = '/palworld/.depotdownloader';
 const restoreAcct = `mkdir -p "$HOME/.local/share" && if [ -d ${ACCT_SAVE}/IsolatedStorage ]; then rm -rf "$HOME/.local/share/IsolatedStorage" && cp -r ${ACCT_SAVE}/IsolatedStorage "$HOME/.local/share/"; fi; true`;
 const persistAcct = `if [ -d "$HOME/.local/share/IsolatedStorage" ]; then mkdir -p ${ACCT_SAVE} && rm -rf ${ACCT_SAVE}/IsolatedStorage && cp -r "$HOME/.local/share/IsolatedStorage" ${ACCT_SAVE}/; fi; true`;
 
-/** Read the signed-in Steam account name from DepotDownloader's stored tokens. */
+/**
+ * Read the signed-in Steam account name from DepotDownloader's stored tokens.
+ * account.config is DEFLATE-compressed protobuf (not JSON): decompress and
+ * extract the account-name string (maps are keyed by it; the values are long
+ * JWT refresh tokens, easily distinguished).
+ */
 async function readStoredSteamUsername(server) {
   try {
-    const raw = await dockerctl.exec(server.containerName,
-      ['sh', '-c', `cat $(find ${ACCT_SAVE}/IsolatedStorage "$HOME/.local/share/IsolatedStorage" -name account.config 2>/dev/null | head -1) 2>/dev/null`]);
-    if (!raw.trim()) return null;
-    try {
-      const parsed = JSON.parse(raw);
-      const keys = Object.keys(parsed.LoginTokens || {}).concat(Object.keys(parsed.GuardData || {}));
-      if (keys.length) return keys[keys.length - 1];
-    } catch {
-      const m = raw.match(/"LoginTokens"\s*:\s*\{\s*"([^"]+)"/);
-      if (m) return m[1];
+    const b64 = await dockerctl.exec(server.containerName,
+      ['sh', '-c', `base64 $(find ${ACCT_SAVE}/IsolatedStorage "$HOME/.local/share/IsolatedStorage" -name account.config 2>/dev/null | head -1) 2>/dev/null`]);
+    if (!b64.trim()) return null;
+    const zlib = require('zlib');
+    const buf = Buffer.from(b64.replace(/\s/g, ''), 'base64');
+    let data = buf;
+    for (const fn of [zlib.inflateRawSync, zlib.inflateSync, zlib.gunzipSync]) {
+      try { data = fn(buf); break; } catch { /* try next */ }
     }
+    const strings = String(data.toString('latin1')).match(/[\x20-\x7e]{3,}/g) || [];
+    const candidates = strings.filter((s) =>
+      /^[A-Za-z0-9_.-]{3,32}$/.test(s) &&      // steam login-name shape
+      !/^ey[A-Za-z0-9_-]+$/.test(s) &&          // not a JWT fragment
+      !/^\d+$/.test(s));                        // not a bare number
+    return candidates[0] || null;
   } catch { /* absent */ }
   return null;
 }
@@ -539,5 +548,5 @@ async function installFromNexus(server, modId) {
 module.exports = {
   searchWorkshop, getDetails, listInstalled, installFromWorkshop, installFromUpload, removeMod,
   steamCreds, testSteamLogin, validateNexusKey, nexusBrowse, installFromNexus,
-  startQrLogin, qrLoginStatus, modPlatform,
+  startQrLogin, qrLoginStatus, modPlatform, readStoredSteamUsername,
 };

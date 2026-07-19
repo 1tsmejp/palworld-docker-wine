@@ -180,8 +180,18 @@ app.post('/api/saves/migrate', wrap(async (req, res) => {
 
 // ---- mod accounts (Steam / Nexus credentials) ---------------------------
 app.get('/api/servers/:id/accounts', wrap(async (req, res) => {
-  getServer(req.params.id);
-  res.json(secretsStatus(req.params.id));
+  const server = getServer(req.params.id);
+  // Self-healing: a persisted DepotDownloader token without stored secrets
+  // (e.g. sign-in verified but name extraction failed) is adopted here.
+  let status = secretsStatus(server.id);
+  if (!status.steam) {
+    const username = await mods.readStoredSteamUsername(server).catch(() => null);
+    if (username) {
+      setSecrets(server.id, { steamUsername: username, steamTokenOnly: true, steamVerified: true });
+      status = secretsStatus(server.id);
+    }
+  }
+  res.json(status);
 }));
 
 // Steam sign-in: verifies with a real DepotDownloader login in the game

@@ -105,11 +105,17 @@ function validateUpdates(updates, server = null) {
  * (may differ if the container was edited outside the stack, e.g. via
  * Portainer's container editor), and the effective value.
  */
+// Image-infrastructure env vars the Wine image's entrypoint actually honors —
+// the rest of the image-scope catalog is thijsvanloef-image-only.
+const WINE_SUPPORTED_IMAGE_ENVS = new Set(['UPDATE_ON_BOOT', 'TZ']);
+
 function mergedSettings(server, runningEnv = null) {
   const { schema } = bySetting();
   const env = readEnv(server.composeFile, server.serviceName);
   const drift = [];
-  const settings = schema.settings.map((s) => {
+  const applicable = schema.settings.filter((s) =>
+    s.scope !== 'image' || server.flavor !== 'wine' || WINE_SUPPORTED_IMAGE_ENVS.has(s.env));
+  const settings = applicable.map((s) => {
     const pinnedRaw = env[s.env];
     const pinned = pinnedRaw !== undefined ? coerce(s, pinnedRaw) : undefined;
     const entry = { ...s, pinned, effective: pinned !== undefined ? pinned : s.default };

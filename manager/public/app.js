@@ -619,7 +619,7 @@ function drawJob(job) {
 }
 
 // ---------------------------------------------------------------- mods
-const modState = { q: '', sort: 'trend', page: 1, compat: 'pak', results: null, loading: false };
+const modState = { q: '', sort: 'trend', page: 1, compat: 'pak', results: null, loading: false, forServer: null };
 
 function fmtBytes(n) {
   if (!n) return '—';
@@ -631,7 +631,7 @@ function fmtBytes(n) {
 
 async function renderMods(v, s) {
   v.innerHTML = `
-    <div class="drift-banner">
+    <div class="drift-banner" id="mods-platform-banner">
       ℹ️ <b>Linux server mod support:</b> only <b>pak-format</b> mods work on this server.
       Palworld's official Workshop mod system (UE4SS / Lua / PalSchema types) is Windows-only —
       installs are checked and rejected if they contain no pak files. Mods load from
@@ -882,7 +882,8 @@ async function renderMods(v, s) {
   $('#nexus-browse-card').classList.add('hidden');
 
   refreshAccounts();
-  loadInstalledMods(s);
+  if (modState.forServer !== s.id) { modState.forServer = s.id; modState.results = null; modState.compat = 'pak'; }
+  await loadInstalledMods(s);
   if (modState.results) drawModResults(s); else doSearch(1);
 }
 
@@ -939,20 +940,39 @@ async function loadInstalledMods(s) {
     const el = $('#mods-installed');
     if (!el) return;
     state.steamCreds = data.steamCredsConfigured;
+    state.modPlatform = data.modPlatform || 'linux';
+    // Platform-aware banner + filters
+    const banner = $('#mods-platform-banner');
+    if (banner && state.modPlatform === 'windows') {
+      banner.innerHTML = `✅ <b>Full mod support:</b> this server runs the <b>Windows build</b> —
+        UE4SS, PalSchema, Lua and pak mods all work. Official-format Workshop mods install through
+        Palworld's own mod system (<span class="mono">Mods/Workshop</span> + auto-enable in
+        <span class="mono">PalModSettings.ini</span>); plain pak mods go to <span class="mono">~mods</span>.
+        Changes load on restart.`;
+      banner.style.borderColor = '#1e4d3d';
+      banner.style.color = 'var(--green)';
+      banner.style.background = '#12241c';
+      const chips = $('#compat-chips');
+      if (chips && modState.compat !== 'all') {
+        modState.compat = 'all';
+        $$('#compat-chips [data-compat]').forEach((x) => x.classList.toggle('active', x.dataset.compat === 'all'));
+      }
+    }
     el.innerHTML = data.installed.length
-      ? `<table><tr><th>Mod</th><th>Files</th><th>Source</th><th></th></tr>
+      ? `<table><tr><th>Mod</th><th>Type</th><th>Files</th><th>Source</th><th></th></tr>
         ${data.installed.map((m) => `<tr>
           <td>${m.meta ? `<a href="${esc(m.meta.url || '#')}" target="_blank">${esc(m.meta.title)}</a>` : esc(m.dir)}</td>
+          <td>${m.kind === 'official' ? '<span class="tag" style="color:var(--accent)">official</span>' : '<span class="tag">pak</span>'}</td>
           <td class="mono" style="font-size:.72rem">${m.files.map(esc).join('<br>')}</td>
           <td>${esc(m.meta?.source || '')}</td>
-          <td><button class="btn small danger" data-rm-mod="${esc(m.dir)}">Remove</button></td>
+          <td><button class="btn small danger" data-rm-mod="${esc(m.dir)}" data-rm-kind="${esc(m.kind)}">Remove</button></td>
         </tr>`).join('')}</table>
         <p class="muted" style="font-size:.75rem;margin-top:8px">Changes to mods take effect after a restart (Deploy tab).</p>`
       : 'No mods installed.';
     $$('#mods-installed [data-rm-mod]').forEach((b) => b.onclick = async () => {
       const ok = await confirmModal({ title: `Remove mod "${b.dataset.rmMod}"?`, body: '<p>Files are deleted from the server. Takes effect on next restart.</p>', confirmText: 'Remove', danger: true });
       if (!ok) return;
-      try { await api(`/servers/${s.id}/mods/${encodeURIComponent(b.dataset.rmMod)}`, { method: 'DELETE' }); toast('Mod removed — restart required', 'ok'); loadInstalledMods(s); }
+      try { await api(`/servers/${s.id}/mods/${encodeURIComponent(b.dataset.rmMod)}?kind=${b.dataset.rmKind}`, { method: 'DELETE' }); toast('Mod removed — restart required', 'ok'); loadInstalledMods(s); }
       catch (e) { toast('Remove failed: ' + e.message, 'err'); }
     });
     const note = $('#mods-creds-note');
@@ -968,8 +988,11 @@ function drawModResults(s) {
   const el = $('#mods-results');
   if (!el || !modState.results) return;
   const items = modState.results.items;
-  const winOnly = (m) => (m.compat ? m.compat === 'windows' : m.tags.some((t) => /ue4ss|palschema|lua/i.test(t)));
-  const compatBadge = (m) => m.compat === 'pak' ? '<span class="tag" style="color:var(--green)">🐧 Linux-compatible</span> '
+  const isWinServer = state.modPlatform === 'windows';
+  const winOnly = (m) => !isWinServer && (m.compat ? m.compat === 'windows' : m.tags.some((t) => /ue4ss|palschema|lua/i.test(t)));
+  const compatBadge = (m) => isWinServer
+    ? '<span class="tag" style="color:var(--green)">✔ supported on this server</span> '
+    : m.compat === 'pak' ? '<span class="tag" style="color:var(--green)">🐧 Linux-compatible</span> '
     : m.compat === 'windows' ? '<span class="tag" style="color:var(--amber)">🪟 Windows-only type</span> '
     : '<span class="tag">❔ type untagged — install verifies pak content</span> ';
   el.innerHTML = items.length ? `<div class="mod-grid">
@@ -994,7 +1017,9 @@ function drawModResults(s) {
   $$('#mods-results [data-install]').forEach((b) => b.onclick = async () => {
     const ok = await confirmModal({
       title: `Install "${b.dataset.title}"?`,
-      body: `<p>Downloads via the game container's DepotDownloader and installs pak files to <span class="mono">~mods</span>.
+      body: `<p>Downloads via the game container's DepotDownloader and installs ${isWinServer
+               ? 'through Palworld\'s official mod system (or <span class="mono">~mods</span> for plain paks)'
+               : 'pak files to <span class="mono">~mods</span>'}.
              ${state.steamCreds ? '' : '<b>Steam credentials are not configured — this will fail.</b>'}
              Takes effect after restart.</p>`,
       confirmText: 'Install',

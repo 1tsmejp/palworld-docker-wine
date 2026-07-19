@@ -20,6 +20,17 @@ const { getSecrets, setSecrets } = require('./secrets');
 const APPID = 1623730;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) palworld-manager';
 const MODS_DIR = '/palworld/Pal/Content/Paks/~mods';
+// Official mod system (Windows server builds, incl. Wine-hosted)
+const OFFICIAL_MODS_DIR = '/palworld/Pal/Binaries/Win64/Mods';
+
+/**
+ * 'windows' (server runs the Windows build, e.g. under Wine): ALL mod types
+ * work — UE4SS/PalSchema/Lua via the official Mods/Workshop system.
+ * 'linux' (native Linux build): pak sideload only.
+ */
+function modPlatform(server) {
+  return server.flavor === 'wine' || server.modPlatform === 'windows' ? 'windows' : 'linux';
+}
 
 const SORTS = { trend: 'trend', mostrecent: 'mostrecent', lastupdated: 'lastupdated', subscribers: 'totaluniquesubscribers' };
 
@@ -111,11 +122,27 @@ async function listInstalled(server) {
     const dir = rel.includes('/') ? rel.split('/')[0] : '(root)';
     (byDir[dir] ??= []).push(rel);
   }
-  return Object.entries(byDir).map(([dir, fileList]) => ({
-    dir,
+  const result = Object.entries(byDir).map(([dir, fileList]) => ({
+    dir, kind: 'pak',
     files: fileList,
     meta: reg[`${server.id}:${dir}`] || null,
   }));
+
+  // Official mod system installs (Windows-build servers)
+  if (modPlatform(server) === 'windows') {
+    try {
+      const out = await dockerctl.exec(server.containerName,
+        ['sh', '-c', `ls -d ${OFFICIAL_MODS_DIR}/Workshop/*/ 2>/dev/null | xargs -rn1 basename`]);
+      for (const dir of out.trim() ? out.trim().split('\n') : []) {
+        result.push({
+          dir, kind: 'official',
+          files: ['(official mod system)'],
+          meta: reg[`${server.id}:official:${dir}`] || null,
+        });
+      }
+    } catch { /* dir absent */ }
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------- steam auth
@@ -292,24 +319,53 @@ async function installFromWorkshop(server, publishedFileId) {
     const hint = /STEAM GUARD/i.test(output) ? ' Steam Guard triggered — re-verify the login under Mods → Accounts with a fresh code.' : '';
     throw Object.assign(new Error(`Workshop download failed: ${tail}.${hint}`), { status: 502 });
   }
+  // Official-format Workshop mods carry an Info.json; on a Windows-build
+  // server (incl. Wine) they install via the official Mods/Workshop system,
+  // which handles UE4SS / PalSchema / Lua / LogicMods deployment itself.
+  const infoOut = await dockerctl.exec(c, ['sh', '-c', `find '${tmp}' -maxdepth 4 -name Info.json | head -1`]);
+  const infoJson = infoOut.trim();
+  if (modPlatform(server) === 'windows' && infoJson) {
+    const modRoot = infoJson.replace(/\/Info\.json$/, '');
+    let packageName = null;
+    try { packageName = JSON.parse(await dockerctl.exec(c, ['cat', infoJson])).PackageName || null; } catch { /* ignore */ }
+    const destDir = `${OFFICIAL_MODS_DIR}/Workshop/${publishedFileId}`;
+    await dockerctl.exec(c, ['sh', '-c', `rm -rf ${q(destDir)} && mkdir -p ${q(destDir)} && cp -r ${q(modRoot)}/. ${q(destDir)}/ && rm -rf '${tmp}'`]);
+    const ini = `${OFFICIAL_MODS_DIR}/PalModSettings.ini`;
+    await dockerctl.exec(c, ['sh', '-c', `
+      touch ${q(ini)}
+      grep -q "bGlobalEnableMod=" ${q(ini)} || echo "bGlobalEnableMod=True" >> ${q(ini)}
+      ${packageName ? `grep -q "ActiveModList=${packageName}" ${q(ini)} || echo "ActiveModList=${packageName}" >> ${q(ini)}` : 'true'}`]);
+    const reg = readRegistry();
+    reg[`${server.id}:official:${publishedFileId}`] = {
+      source: 'workshop', kind: 'official', id: String(publishedFileId), packageName,
+      title: detail?.title || `Workshop item ${publishedFileId}`,
+      url: `https://steamcommunity.com/sharedfiles/filedetails/?id=${publishedFileId}`,
+      installedAt: new Date().toISOString(),
+    };
+    writeRegistry(reg);
+    return { installed: publishedFileId, kind: 'official', packageName, restartRequired: true };
+  }
+
   const found = await dockerctl.exec(c, ['sh', '-c', `find '${tmp}' -type f \\( -name '*.pak' -o -name '*.utoc' -o -name '*.ucas' \\) 2>/dev/null`]);
   const pakFiles = found.trim() ? found.trim().split('\n') : [];
   if (!pakFiles.length) {
     await dockerctl.exec(c, ['sh', '-c', `rm -rf '${tmp}'`]);
-    throw Object.assign(new Error('Download succeeded but contains no .pak files — this mod type (UE4SS/Lua/PalSchema) only works on Windows servers and cannot run on this Linux server.'), { status: 400 });
+    throw Object.assign(new Error(modPlatform(server) === 'windows'
+      ? 'Download contains neither an official-format Info.json nor pak files — cannot install automatically.'
+      : 'Download succeeded but contains no .pak files — this mod type (UE4SS/Lua/PalSchema) only works on Windows-build servers (e.g. the Wine instance) and cannot run on this native Linux server.'), { status: 400 });
   }
   const destDir = `${MODS_DIR}/${publishedFileId}`;
   await dockerctl.exec(c, ['sh', '-c', `mkdir -p '${destDir}' && find '${tmp}' -type f \\( -name '*.pak' -o -name '*.utoc' -o -name '*.ucas' \\) -exec mv {} '${destDir}/' \\; && rm -rf '${tmp}'`]);
   const reg = readRegistry();
   reg[`${server.id}:${publishedFileId}`] = {
-    source: 'workshop', id: String(publishedFileId),
+    source: 'workshop', kind: 'pak', id: String(publishedFileId),
     title: detail?.title || `Workshop item ${publishedFileId}`,
     url: `https://steamcommunity.com/sharedfiles/filedetails/?id=${publishedFileId}`,
     installedAt: new Date().toISOString(),
     files: pakFiles.map((f) => path.basename(f)),
   };
   writeRegistry(reg);
-  return { installed: publishedFileId, files: pakFiles.map((f) => path.basename(f)), restartRequired: true };
+  return { installed: publishedFileId, kind: 'pak', files: pakFiles.map((f) => path.basename(f)), restartRequired: true };
 }
 
 /** Install from an uploaded .pak (or companion) file. */
@@ -332,12 +388,22 @@ async function installFromUpload(server, filename, buffer, modName) {
   return { installed: dir, file: safeName, restartRequired: true };
 }
 
-async function removeMod(server, dir) {
+async function removeMod(server, dir, kind = 'pak') {
   const safe = path.basename(dir);
   if (!safe || safe === '.' || safe === '..' || safe === '(root)') throw Object.assign(new Error('invalid mod dir'), { status: 400 });
-  await dockerctl.exec(server.containerName, ['sh', '-c', `rm -rf '${MODS_DIR}/${safe.replace(/'/g, '')}'`]);
   const reg = readRegistry();
-  delete reg[`${server.id}:${safe}`];
+  if (kind === 'official') {
+    await dockerctl.exec(server.containerName, ['sh', '-c', `rm -rf ${q(`${OFFICIAL_MODS_DIR}/Workshop/${safe}`)}`]);
+    const meta = reg[`${server.id}:official:${safe}`];
+    if (meta && meta.packageName) {
+      await dockerctl.exec(server.containerName,
+        ['sh', '-c', `sed -i "/^ActiveModList=${meta.packageName}$/d" ${q(`${OFFICIAL_MODS_DIR}/PalModSettings.ini`)} 2>/dev/null || true`]);
+    }
+    delete reg[`${server.id}:official:${safe}`];
+  } else {
+    await dockerctl.exec(server.containerName, ['sh', '-c', `rm -rf '${MODS_DIR}/${safe.replace(/'/g, '')}'`]);
+    delete reg[`${server.id}:${safe}`];
+  }
   writeRegistry(reg);
   return { removed: safe, restartRequired: true };
 }
@@ -431,5 +497,5 @@ async function installFromNexus(server, modId) {
 module.exports = {
   searchWorkshop, getDetails, listInstalled, installFromWorkshop, installFromUpload, removeMod,
   steamCreds, testSteamLogin, validateNexusKey, nexusBrowse, installFromNexus,
-  startQrLogin, qrLoginStatus,
+  startQrLogin, qrLoginStatus, modPlatform,
 };

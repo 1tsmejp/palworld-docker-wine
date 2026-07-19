@@ -8,7 +8,8 @@
       "composeProject": "palworld-wine",
       "serviceName": "palworld-wine",
       "containerName": "palworld-wine",
-      "apiUrl": "http://palworld-wine:8212"
+      "apiUrl": "http://palworld-wine:8212",
+      "flavor": "wine"
     }
   ]
 }

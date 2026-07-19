@@ -252,6 +252,7 @@ app.get('/api/servers/:id/mods', wrap(async (req, res) => {
     installed: await mods.listInstalled(server),
     steamCredsConfigured: mods.steamCreds(server) !== null,
     accounts: secretsStatus(server.id),
+    modPlatform: mods.modPlatform(server),
   });
 }));
 
@@ -270,7 +271,7 @@ app.post('/api/servers/:id/mods/upload', express.raw({ type: '*/*', limit: '500m
 
 app.delete('/api/servers/:id/mods/:dir', wrap(async (req, res) => {
   const server = getServer(req.params.id);
-  res.json(await mods.removeMod(server, req.params.dir));
+  res.json(await mods.removeMod(server, req.params.dir, req.query.kind === 'official' ? 'official' : 'pak'));
 }));
 
 // ---- announcements ----------------------------------------------------------

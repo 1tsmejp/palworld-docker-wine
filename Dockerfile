@@ -25,6 +25,14 @@ RUN dpkg --add-architecture i386 \
  && chmod +x /usr/local/bin/winetricks \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# DepotDownloader — used for Steam-authenticated Workshop mod downloads
+# (management tooling shells into this container to run it).
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \
+ && wget -qO /tmp/dd.zip https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_3.4.0/DepotDownloader-linux-x64.zip \
+ && unzip -o /tmp/dd.zip -d /usr/local/bin DepotDownloader \
+ && chmod +x /usr/local/bin/DepotDownloader && rm /tmp/dd.zip \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 RUN useradd -m -u 1000 steam
 COPY entrypoint.sh /entrypoint.sh
 COPY PalWorldSettings.ini.template /home/steam/PalWorldSettings.ini.template

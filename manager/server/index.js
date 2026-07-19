@@ -48,7 +48,8 @@ app.get('/api/servers', wrap(async (req, res) => {
         } catch { /* ignore */ }
       }
     }
-    return { id: s.id, name: s.name, container: state, info, metrics, paused, apiUrl: s.apiUrl };
+    const pendingMods = mods.pendingModChanges(s, state.startedAt);
+    return { id: s.id, name: s.name, container: state, info, metrics, paused, apiUrl: s.apiUrl, pendingModChanges: pendingMods.length };
   }));
   res.json(out);
 }));
@@ -249,6 +250,14 @@ app.get('/api/servers/:id/nexus/browse', wrap(async (req, res) => {
 app.post('/api/servers/:id/nexus/install', wrap(async (req, res) => {
   const server = getServer(req.params.id);
   res.json(await mods.installFromNexus(server, req.body.id));
+}));
+
+// Mod installs/removals since the container's current start — i.e. staged on
+// disk but not active until the next restart (mods only load at boot).
+app.get('/api/servers/:id/mods-pending', wrap(async (req, res) => {
+  const server = getServer(req.params.id);
+  const state = await dockerctl.containerState(server.containerName);
+  res.json(mods.pendingModChanges(server, state.startedAt));
 }));
 
 // ---- mods ---------------------------------------------------------------

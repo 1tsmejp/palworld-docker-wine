@@ -4,6 +4,21 @@ const { dockerctl } = require('./dockerctl');
 const { readEnv, updateEnv } = require('./compose');
 const { DATA_DIR } = require('./config');
 const { getSecrets, setSecrets } = require('./secrets');
+const { appendHistory, readHistory } = require('./config');
+
+/** Record a mod change so the UI can show it as pending until the next restart. */
+function logModChange(server, action, id, title, kind) {
+  appendHistory('modchanges', { serverId: server.id, action, id: String(id), title: title || String(id), kind });
+}
+
+/** Mod changes made after the container's current start (i.e. not yet active). */
+function pendingModChanges(server, containerStartedAt) {
+  if (!containerStartedAt) return [];
+  const started = new Date(containerStartedAt).getTime();
+  return readHistory('modchanges', 100)
+    .filter((e) => e.serverId === server.id && new Date(e.ts).getTime() > started)
+    .reverse();
+}
 
 /**
  * Steam Workshop browsing (no API key needed) + mod install for Linux
@@ -392,6 +407,7 @@ async function installFromWorkshop(server, publishedFileId) {
     };
     writeRegistry(reg);
     syncWorkshopModsEnv(server, publishedFileId, true);
+    logModChange(server, 'install', publishedFileId, detail && detail.title, 'official');
     return { installed: publishedFileId, kind: 'official', packageName, restartRequired: true };
   }
 
@@ -415,6 +431,7 @@ async function installFromWorkshop(server, publishedFileId) {
   };
   writeRegistry(reg);
   syncWorkshopModsEnv(server, publishedFileId, true);
+  logModChange(server, 'install', publishedFileId, detail && detail.title, 'pak');
   return { installed: publishedFileId, kind: 'pak', files: pakFiles.map((f) => path.basename(f)), restartRequired: true };
 }
 
@@ -435,6 +452,7 @@ async function installFromUpload(server, filename, buffer, modName) {
   if (!entry.files.includes(safeName)) entry.files.push(safeName);
   reg[key] = entry;
   writeRegistry(reg);
+  logModChange(server, 'install', dir, dir, 'upload');
   return { installed: dir, file: safeName, restartRequired: true };
 }
 
@@ -456,6 +474,7 @@ async function removeMod(server, dir, kind = 'pak') {
   }
   writeRegistry(reg);
   if (/^\d+$/.test(safe)) syncWorkshopModsEnv(server, safe, false);
+  logModChange(server, 'remove', safe, safe, kind);
   return { removed: safe, restartRequired: true };
 }
 
@@ -542,11 +561,12 @@ async function installFromNexus(server, modId) {
     files: pakFiles.map((f) => path.basename(f)),
   };
   writeRegistry(reg);
+  logModChange(server, 'install', dir, (info && info.name) || dir, 'nexus');
   return { installed: dir, files: pakFiles.map((f) => path.basename(f)), restartRequired: true };
 }
 
 module.exports = {
   searchWorkshop, getDetails, listInstalled, installFromWorkshop, installFromUpload, removeMod,
   steamCreds, testSteamLogin, validateNexusKey, nexusBrowse, installFromNexus,
-  startQrLogin, qrLoginStatus, modPlatform, readStoredSteamUsername,
+  startQrLogin, qrLoginStatus, modPlatform, readStoredSteamUsername, pendingModChanges,
 };

@@ -77,6 +77,7 @@ async function refreshServers() {
     if (!state.serverId && state.servers.length) state.serverId = state.servers[0].id;
     renderSidebar();
     renderTopbar();
+    updatePendingUI();
     if (state.tab === 'overview') renderView();
   } catch (e) { toast('Failed to load servers: ' + e.message, 'err'); }
 }
@@ -348,21 +349,27 @@ function bindSettingRows() {
 
 function updatePendingUI() {
   const n = Object.keys(state.pending).length;
+  const m = currentServer()?.pendingModChanges || 0;
+  const total = n + m;
   const pill = $('#pending-pill');
-  pill.textContent = n;
-  pill.classList.toggle('hidden', n === 0);
+  pill.textContent = total;
+  pill.classList.toggle('hidden', total === 0);
   let bar = $('#pending-bar');
-  if (n === 0) { bar?.remove(); return; }
+  if (total === 0) { bar?.remove(); return; }
   if (!bar) {
     bar = document.createElement('div');
     bar.id = 'pending-bar';
     document.body.appendChild(bar);
   }
+  const parts = [];
+  if (n) parts.push(`<b>${n}</b> setting change${n === 1 ? '' : 's'}`);
+  if (m) parts.push(`<b>${m}</b> mod change${m === 1 ? '' : 's'}`);
   bar.innerHTML = `
-    <div class="grow"><b>${n}</b> pending setting change${n === 1 ? '' : 's'} — applying requires a server restart</div>
-    <button class="btn ghost" id="discard-pending">Discard</button>
+    <div class="grow">${parts.join(' + ')} awaiting a server restart</div>
+    ${n ? '<button class="btn ghost" id="discard-pending">Discard settings</button>' : ''}
     <button class="btn primary" id="review-pending">Review &amp; Deploy</button>`;
-  $('#discard-pending').onclick = () => { state.pending = {}; updatePendingUI(); renderView(); };
+  const d = $('#discard-pending');
+  if (d) d.onclick = () => { state.pending = {}; updatePendingUI(); renderView(); };
   $('#review-pending').onclick = () => { state.tab = 'deploy'; $$('#tabs .tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === 'deploy')); renderView(); };
 }
 
@@ -459,7 +466,11 @@ function renderDeploy(v, s) {
                 <td class="diff-val"><span class="diff-new">${val === null ? 'image default (' + esc(String(set.default)) + ')' : esc(String(val))}</span></td>
               </tr>`;
             }).join('')}</table>`
-          : '<p class="muted">No pending changes. You can still do an announced reboot, or change settings in the Settings tab.</p>'}
+          : '<p class="muted">No pending setting changes.</p>'}
+        </div>
+        <div class="card">
+          <h3>Mod changes awaiting restart</h3>
+          <div id="dp-mods-pending" class="muted">Loading…</div>
         </div>
         <div class="card">
           <h3>Restart options</h3>
@@ -505,6 +516,21 @@ function renderDeploy(v, s) {
     </div>`;
 
   $('#dp-msg-canned').onchange = (e) => $('#dp-msg').classList.toggle('hidden', e.target.value !== '__custom');
+
+  api(`/servers/${s.id}/mods-pending`).then((changes) => {
+    const el = $('#dp-mods-pending');
+    if (!el) return;
+    el.innerHTML = changes.length
+      ? `<table><tr><th>Action</th><th>Mod</th><th>Kind</th><th>When</th></tr>
+        ${changes.map((c) => `<tr>
+          <td>${c.action === 'install' ? '<span class="val-ok">+ install</span>' : '<span class="val-bad">− remove</span>'}</td>
+          <td>${esc(c.title)}</td>
+          <td>${esc(c.kind || '')}</td>
+          <td class="muted">${new Date(c.ts).toLocaleTimeString()}</td>
+        </tr>`).join('')}</table>
+        <p class="muted" style="font-size:.75rem;margin-top:8px">Staged on disk — they load when the server restarts.</p>`
+      : 'None — the running server matches the installed mod set.';
+  }).catch(() => {});
 
   $('#dp-go').onclick = async () => {
     const countdownSeconds = parseInt($('#dp-countdown').value, 10);
@@ -772,7 +798,7 @@ async function renderMods(v, s) {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || res.status);
-        toast(`${f.name} installed — restart required to load`, 'ok');
+        toast(`${f.name} installed — review & deploy to activate`, 'ok');
       } catch (err) { toast(`Upload failed: ${err.message}`, 'err'); }
     }
     loadInstalledMods(s);
@@ -926,8 +952,9 @@ async function loadNexus(s) {
       b.disabled = true; b.textContent = 'Installing…';
       try {
         const r = await api(`/servers/${s.id}/nexus/install`, { method: 'POST', body: { id: b.dataset.nexusInstall } });
-        toast(`Installed ${(r.files || [r.installed]).join(', ')} — restart required`, 'ok');
+        toast(`Installed ${(r.files || [r.installed]).join(', ')} — review & deploy to activate`, 'ok');
         loadInstalledMods(s);
+        refreshServers();
       } catch (e) { toast('Install failed: ' + e.message, 'err'); }
       b.disabled = false; b.textContent = 'Install';
     });
@@ -972,7 +999,7 @@ async function loadInstalledMods(s) {
     $$('#mods-installed [data-rm-mod]').forEach((b) => b.onclick = async () => {
       const ok = await confirmModal({ title: `Remove mod "${b.dataset.rmMod}"?`, body: '<p>Files are deleted from the server. Takes effect on next restart.</p>', confirmText: 'Remove', danger: true });
       if (!ok) return;
-      try { await api(`/servers/${s.id}/mods/${encodeURIComponent(b.dataset.rmMod)}?kind=${b.dataset.rmKind}`, { method: 'DELETE' }); toast('Mod removed — restart required', 'ok'); loadInstalledMods(s); }
+      try { await api(`/servers/${s.id}/mods/${encodeURIComponent(b.dataset.rmMod)}?kind=${b.dataset.rmKind}`, { method: 'DELETE' }); toast('Mod removed — review & deploy to apply', 'ok'); loadInstalledMods(s); refreshServers(); }
       catch (e) { toast('Remove failed: ' + e.message, 'err'); }
     });
     const note = $('#mods-creds-note');
@@ -1031,8 +1058,9 @@ function drawModResults(s) {
       const what = r.kind === 'official'
         ? `${r.packageName || r.installed} via the official mod system`
         : (r.files || []).join(', ');
-      toast(`Installed ${what} — restart required`, 'ok');
+      toast(`Installed ${what} — review & deploy to activate`, 'ok');
       loadInstalledMods(s);
+      refreshServers();
     } catch (e) { toast('Install failed: ' + e.message, 'err'); }
     b.disabled = false; b.textContent = 'Install';
   });

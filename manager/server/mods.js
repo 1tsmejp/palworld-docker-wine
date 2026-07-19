@@ -234,7 +234,10 @@ function startQrLogin(server) {
   if (old && old.child && old.status === 'waiting') { try { old.child.kill('SIGKILL'); } catch { /* gone */ } }
 
   const probeId = '3763387660';
-  const cmd = `${restoreAcct}; DepotDownloader -app ${APPID} -pubfile ${probeId} -manifest-only -qr -dir /tmp/pw-qr-login 2>&1; rc=$?; ${persistAcct}; rm -rf /tmp/pw-qr-login; exit $rc`;
+  // -remember-password is what makes DepotDownloader store the refresh token
+  // (in IsolatedStorage account.config, keyed by account name) — without it a
+  // QR login authenticates but persists nothing.
+  const cmd = `${restoreAcct}; DepotDownloader -app ${APPID} -pubfile ${probeId} -manifest-only -qr -remember-password -dir /tmp/pw-qr-login 2>&1; rc=$?; ${persistAcct}; rm -rf /tmp/pw-qr-login; exit $rc`;
   const child = spawn('docker', ['exec', '-i', server.containerName, 'sh', '-c', cmd]);
   const sess = {
     id: crypto.randomUUID(), serverId: server.id, status: 'starting',

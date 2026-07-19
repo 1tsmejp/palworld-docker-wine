@@ -240,7 +240,7 @@ async function renderSettings(v, s) {
     const groups = {};
     for (const set of data.settings) {
       if (filter.cat !== '*' && set.category !== filter.cat) continue;
-      if (q && !(set.env.toLowerCase().includes(q) || set.iniKey.toLowerCase().includes(q) || (set.description || '').toLowerCase().includes(q))) continue;
+      if (q && !(set.env.toLowerCase().includes(q) || (set.iniKey || '').toLowerCase().includes(q) || (set.description || '').toLowerCase().includes(q))) continue;
       (groups[set.category] ??= []).push(set);
     }
     $('#settings-list').innerHTML = Object.entries(groups).map(([cat, sets]) => `
@@ -293,7 +293,7 @@ function settingRow(set) {
   return `
     <div class="setting ${changed ? 'changed' : ''} ${isPinned ? 'pinned-row' : ''}" data-row="${set.env}">
       <div class="info">
-        <span class="name">${esc(set.iniKey)}</span><span class="env-name">${esc(set.env)}</span>
+        <span class="name">${esc(set.iniKey || set.env)}</span><span class="env-name">${esc(set.env)}</span>
         <div class="desc">${esc(set.description || '')}</div>
         <div class="flags">
           <span class="flag">default: ${esc(String(set.default))}</span>

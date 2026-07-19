@@ -1,0 +1,30 @@
+services:
+  palworld-wine:
+    build: .
+    image: palworld-docker-wine:latest
+    container_name: palworld-wine
+    restart: unless-stopped
+    stop_grace_period: 45s
+    ports:
+      - "8211:8211/udp"   # game port
+      - "8212:8212/tcp"   # REST API — do NOT forward this port to the internet
+    environment:
+      SERVER_NAME: "My Palworld Server (Wine)"
+      SERVER_DESCRIPTION: "Windows dedicated server under Wine — full mod support"
+      SERVER_PASSWORD: "CHANGE_ME"          # players need this to join (empty = open)
+      ADMIN_PASSWORD: "CHANGE_ME_ADMIN"     # RCON / REST API auth — always set this
+      PLAYERS: 16
+      COMMUNITY: "False"                    # True + SERVER_PASSWORD to list publicly
+      REST_API_ENABLED: "True"
+      REST_API_PORT: 8212
+      UPDATE_ON_BOOT: "false"               # true = check for game updates each start
+      # Palworld's atomic save-backup pipeline fails under Wine ("Failed to
+      # save. Failed copy from backup." when a player joins). Keep this False
+      # and back up the volume externally instead.
+      USE_BACKUP_SAVE_DATA: "False"
+      TZ: "UTC"
+    volumes:
+      - palworld_data:/palworld
+
+volumes:
+  palworld_data:

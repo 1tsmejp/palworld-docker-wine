@@ -98,6 +98,39 @@ this image is deliberately minimal. Notable extras:
 | `DISABLE_GENERATE_SETTINGS` | unset | `true` = never touch `PalWorldSettings.ini` |
 | `USE_BACKUP_SAVE_DATA` | `False` | keep `False` under Wine (see above) |
 
+## Installing mods
+
+Palworld's official mod system runs on this server (that's the point of the
+image). Three ways to install:
+
+1. **Manager UI** (easiest): Mods tab → sign in to Steam (QR with the mobile
+   app; the account must own Palworld — Steam does not allow anonymous
+   Workshop downloads) → Install on any Workshop mod. The manager places it
+   in `Mods/Workshop/`, enables it in `PalModSettings.ini`, and stages it as
+   a pending change until you restart from the Deploy tab.
+2. **`WORKSHOP_MODS` env**: comma-separated Workshop IDs in the compose file
+   (e.g. `WORKSHOP_MODS: "3625557007,3761921027"`). Missing mods are
+   downloaded and installed at boot using the stored Steam token. The manager
+   keeps this list in sync with UI installs/removals automatically.
+3. **Manual**: drop a mod folder (with its `Info.json`) into
+   `Mods/Workshop/<name>/` and add `ActiveModList=<PackageName>` to
+   `Mods/PalModSettings.ini`.
+
+**⚠ Loader runtimes are Workshop items too.** UE4SS-, Lua- and PalSchema-type
+mods need their runtimes installed on the server like any other mod — clients
+get them via Workshop subscriptions, servers do not:
+
+- `UE4SS Experimental (Palworld)` — Workshop ID `3625223587`
+- `PalSchema` — Workshop ID `3625280368`
+
+A mod's `Info.json` lists its `Dependencies` by PackageName; the manager warns
+when a dependency is missing. Verify execution after restart in
+`Pal/Binaries/Win64/Mods/NativeMods/UE4SS/UE4SS.log` — you should see PalSchema
+loaders initializing and each mod loading. The official system deploys
+pak-type mods to `Pal/Content/Paks/~WorkshopMods/<PackageName>/`; if a pak
+doesn't appear there after a restart, copy it from the mod's `Paks/` folder
+manually.
+
 ## Save compatibility
 
 Windows and Linux server builds share the same save format. Worlds

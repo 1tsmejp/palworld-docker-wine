@@ -31,6 +31,10 @@ discord_send() { # $1 = event key, $2 = default message, $3 = player name (optio
 
 STEAMCMD=/usr/games/steamcmd
 SERVER_DIR=/palworld
+# Raw admin password for REST API calls — captured BEFORE the env→ini section
+# below re-exports string vars wrapped in literal quotes for the template
+# (after that, $ADMIN_PASSWORD contains the quote characters).
+REST_ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 WIN_CFG_DIR="$SERVER_DIR/Pal/Saved/Config/WindowsServer"
 EXE_DIR="$SERVER_DIR/Pal/Binaries/Win64"
 
@@ -223,12 +227,17 @@ trap cleanup SIGTERM SIGINT
 #    time and CPU stop). Any UDP packet on the game port resumes it — a
 #    connecting client retries, so the first knock wakes the server.
 monitor_loop() {
-  local interval=10 idle=0 saved=0
+  local interval=10 idle=0 saved=0 fails=0
   local rest="http://127.0.0.1:${REST_API_PORT:-8212}/v1/api"
   local timeout="${AUTO_PAUSE_TIMEOUT_EST:-180}"
   local prev="" resp names count
   while sleep "$interval"; do
-    resp=$(curl -sf -m 5 -u "admin:${ADMIN_PASSWORD}" "$rest/players" 2>/dev/null) || continue
+    if ! resp=$(curl -sf -m 5 -u "admin:${REST_ADMIN_PASSWORD}" "$rest/players" 2>/dev/null); then
+      fails=$((fails + 1))
+      [ "$fails" -eq 30 ] && log "monitor: REST API unreachable for ${fails} polls — check REST_API_ENABLED / ADMIN_PASSWORD"
+      continue
+    fi
+    fails=0
     names=$(printf '%s' "$resp" | jq -r '.players[].name' 2>/dev/null | sort) || continue
     count=$(printf '%s' "$names" | grep -c . || true)
     if [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then
@@ -244,11 +253,11 @@ monitor_loop() {
       if [ "$count" -eq 0 ]; then idle=$((idle + interval)); else idle=0; saved=0; fi
       if [ "$idle" -ge 30 ] && [ "$saved" -eq 0 ]; then
         [ "${AUTO_PAUSE_LOG,,}" != "false" ] && log "auto-pause: server empty — saving world"
-        curl -sf -m 60 -u "admin:${ADMIN_PASSWORD}" -X POST "$rest/save" >/dev/null 2>&1 || true
+        curl -sf -m 60 -u "admin:${REST_ADMIN_PASSWORD}" -X POST "$rest/save" >/dev/null 2>&1 || true
         saved=1
       fi
       if [ "$idle" -ge "$timeout" ]; then
-        curl -sf -m 60 -u "admin:${ADMIN_PASSWORD}" -X POST "$rest/save" >/dev/null 2>&1 || true
+        curl -sf -m 60 -u "admin:${REST_ADMIN_PASSWORD}" -X POST "$rest/save" >/dev/null 2>&1 || true
         [ "${AUTO_PAUSE_LOG,,}" != "false" ] && log "auto-pause: empty for ${idle}s — pausing game process"
         pkill -STOP -f 'PalServer-Win64-Shipping-Cmd.exe' || true
         tcpdump -i any -c 1 -q "udp and dst port 8211" >/dev/null 2>&1
@@ -293,7 +302,7 @@ cd "$SERVER_DIR"
 "$WINE_BIN" "$GAME_BIN" "${START_OPTIONS[@]}" &
 SERVER_PID=$!
 if [ "${AUTO_PAUSE_ENABLED,,}" = "true" ] || [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then
-  if [ "${REST_API_ENABLED,,}" = "true" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
+  if [ "${REST_API_ENABLED,,}" = "true" ] && [ -n "$REST_ADMIN_PASSWORD" ]; then
     monitor_loop &
     MONITOR_PID=$!
     log "monitor started (auto-pause: ${AUTO_PAUSE_ENABLED:-false}, discord: $([ -n "${DISCORD_WEBHOOK_URL:-}" ] && echo on || echo off))"

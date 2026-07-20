@@ -1131,6 +1131,122 @@ async function loadNexus(s) {
   } catch (e) { el.innerHTML = `<span class="val-bad">${esc(e.message)}</span>`; }
 }
 
+// ---------------------------------------------------------------- mod config editor
+// JSON configs render as a generated form (toggles / number / text inputs,
+// nested objects as sections); anything else gets a raw text editor.
+function modConfigEditor(s, dir, kind, title) {
+  const apiBase = `/servers/${s.id}/mods/${encodeURIComponent(dir)}`;
+  const root = $('#modal-root');
+  let currentFile = null, jsonMode = false;
+
+  const isScalar = (v) => v === null || ['boolean', 'number', 'string'].includes(typeof v);
+  const isPlainObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+
+  function formHtml(obj, path = []) {
+    return Object.entries(obj).map(([k, v]) => {
+      const p = esc(JSON.stringify([...path, k]));
+      if (typeof v === 'boolean') return `
+        <div class="setting" style="padding:8px 12px;margin-bottom:4px">
+          <div class="info"><div class="name" style="font-size:.82rem">${esc(k)}</div></div>
+          <div class="ctrl"><label class="toggle"><input type="checkbox" data-cfg-path="${p}" ${v ? 'checked' : ''}><span class="track"></span><span class="thumb"></span></label></div>
+        </div>`;
+      if (typeof v === 'number') return `
+        <div class="setting" style="padding:8px 12px;margin-bottom:4px">
+          <div class="info"><div class="name" style="font-size:.82rem">${esc(k)}</div></div>
+          <div class="ctrl"><input type="number" step="any" data-cfg-path="${p}" value="${v}"></div>
+        </div>`;
+      if (typeof v === 'string' || v === null) return `
+        <div class="setting" style="padding:8px 12px;margin-bottom:4px">
+          <div class="info"><div class="name" style="font-size:.82rem">${esc(k)}</div></div>
+          <div class="ctrl"><input type="text" data-cfg-path="${p}" value="${esc(v ?? '')}"></div>
+        </div>`;
+      if (isPlainObj(v)) return `
+        <div class="cat-head" style="padding:10px 4px 6px">${esc([...path, k].join(' › '))}</div>
+        ${formHtml(v, [...path, k])}`;
+      // arrays / mixed structures: raw JSON for just this key
+      return `
+        <div class="setting" style="padding:8px 12px;margin-bottom:4px;align-items:flex-start;flex-direction:column">
+          <div class="name" style="font-size:.82rem;margin-bottom:6px">${esc(k)} <span class="muted" style="font-size:.68rem">(JSON)</span></div>
+          <textarea data-cfg-json-path="${p}" style="min-height:60px;font-family:ui-monospace,monospace;font-size:.75rem">${esc(JSON.stringify(v, null, 2))}</textarea>
+        </div>`;
+    }).join('');
+  }
+
+  const setDeep = (obj, path, val) => {
+    let o = obj;
+    for (const k of path.slice(0, -1)) o = o[k];
+    o[path[path.length - 1]] = val;
+  };
+
+  async function openFile(rel) {
+    currentFile = rel;
+    const box = $('#cfg-editor');
+    box.innerHTML = '<p class="muted">Loading…</p>';
+    try {
+      const { content } = await api(`${apiBase}/config-file?kind=${kind}&path=${encodeURIComponent(rel)}`);
+      let parsed = null;
+      if (/\.json$/i.test(rel)) { try { parsed = JSON.parse(content); } catch { /* fall back to raw */ } }
+      jsonMode = isPlainObj(parsed);
+      box.innerHTML = jsonMode
+        ? formHtml(parsed)
+        : `<textarea id="cfg-raw" style="min-height:320px;font-family:ui-monospace,monospace;font-size:.78rem">${esc(content)}</textarea>`;
+      box.dataset.original = jsonMode ? JSON.stringify(parsed) : '';
+    } catch (e) { box.innerHTML = `<p class="val-bad">${esc(e.message)}</p>`; }
+  }
+
+  async function save() {
+    let content;
+    if (jsonMode) {
+      const obj = JSON.parse($('#cfg-editor').dataset.original);
+      try {
+        $$('#cfg-editor [data-cfg-path]').forEach((el) => {
+          const path = JSON.parse(el.dataset.cfgPath);
+          setDeep(obj, path, el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value);
+        });
+        $$('#cfg-editor [data-cfg-json-path]').forEach((el) => {
+          setDeep(obj, JSON.parse(el.dataset.cfgJsonPath), JSON.parse(el.value));
+        });
+      } catch (e) { toast('Invalid JSON in one of the fields: ' + e.message, 'err'); return; }
+      content = JSON.stringify(obj, null, 2) + '\n';
+    } else {
+      content = $('#cfg-raw').value;
+    }
+    const btn = $('#cfg-save');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      await api(`${apiBase}/config-file?kind=${kind}`, { method: 'PUT', body: { path: currentFile, content } });
+      toast('Saved — restart the server to apply (Deploy tab)', 'ok');
+      btn.disabled = false; btn.textContent = 'Save';
+    } catch (e) { btn.disabled = false; btn.textContent = 'Save'; toast('Save failed: ' + e.message, 'err'); }
+  }
+
+  (async () => {
+    let files = [];
+    try { ({ files } = await api(`${apiBase}/configs?kind=${kind}`)); }
+    catch (e) { toast('Could not scan mod files: ' + e.message, 'err'); return; }
+    if (!files.length) { toast('No editable config files found in this mod', 'err'); return; }
+    root.innerHTML = `
+      <div class="modal-back"><div class="modal" style="width:min(720px,94vw)">
+        <h3>⚙ ${esc(title)} — settings</h3>
+        <div class="field"><label>Config file</label>
+          <select id="cfg-file">${files.map((f) => `<option>${esc(f)}</option>`).join('')}</select></div>
+        <div id="cfg-editor"></div>
+        <p class="muted" style="font-size:.72rem;margin-top:8px">A one-shot backup (<span class="mono">.mgr-bak</span>) is kept next to the file. Changes load on the next server restart.</p>
+        <div class="actions">
+          <button class="btn ghost" id="cfg-close">Close</button>
+          <button class="btn primary" id="cfg-save">Save</button>
+        </div>
+      </div></div>`;
+    $('#cfg-close').onclick = () => { root.innerHTML = ''; };
+    $('#cfg-file').onchange = (e) => openFile(e.target.value);
+    $('#cfg-save').onclick = save;
+    // Prefer a root-level .json config (the usual feature-toggle file)
+    const first = files.find((f) => !f.includes('/') && /\.json$/i.test(f)) || files[0];
+    $('#cfg-file').value = first;
+    openFile(first);
+  })();
+}
+
 async function loadInstalledMods(s) {
   try {
     const data = await api(`/servers/${s.id}/mods`);
@@ -1162,10 +1278,15 @@ async function loadInstalledMods(s) {
           <td>${m.kind === 'official' ? '<span class="tag" style="color:var(--accent)">official</span>' : '<span class="tag">pak</span>'}</td>
           <td class="mono" style="font-size:.72rem">${m.files.map(esc).join('<br>')}</td>
           <td>${esc(m.meta?.source || '')}</td>
-          <td><button class="btn small danger" data-rm-mod="${esc(m.dir)}" data-rm-kind="${esc(m.kind)}">Remove</button></td>
+          <td style="white-space:nowrap">
+            <button class="btn small" data-cfg-mod="${esc(m.dir)}" data-cfg-kind="${esc(m.kind)}" data-cfg-title="${esc(m.meta?.title || m.dir)}">⚙ Settings</button>
+            <button class="btn small danger" data-rm-mod="${esc(m.dir)}" data-rm-kind="${esc(m.kind)}">Remove</button>
+          </td>
         </tr>`).join('')}</table>
         <p class="muted" style="font-size:.75rem;margin-top:8px">Changes to mods take effect after a restart (Deploy tab).</p>`
       : 'No mods installed.';
+    $$('#mods-installed [data-cfg-mod]').forEach((b) => b.onclick = () =>
+      modConfigEditor(s, b.dataset.cfgMod, b.dataset.cfgKind, b.dataset.cfgTitle));
     $$('#mods-installed [data-rm-mod]').forEach((b) => b.onclick = async () => {
       const ok = await confirmModal({ title: `Remove mod "${b.dataset.rmMod}"?`, body: '<p>Files are deleted from the server. Takes effect on next restart.</p>', confirmText: 'Remove', danger: true });
       if (!ok) return;

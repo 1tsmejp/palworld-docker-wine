@@ -576,8 +576,50 @@ async function installFromNexus(server, modId) {
   return { installed: dir, files: pakFiles.map((f) => path.basename(f)), restartRequired: true };
 }
 
+// ---------------------------------------------------------------------------
+// Mod config files — small text files inside a mod's folder whose name looks
+// like a config (QualityOfLifeConfig.json, Scripts/*/settings.lua,
+// PalSchema/config/config.json, UE4SS-settings.ini, …). Read/write goes
+// through listModConfigs so only enumerated files are ever touched.
+const CONFIG_BASENAME_RE = /(config|settings|options)[^/]*\.(json|ini|lua|txt|cfg|yaml|yml)$/i;
+
+function modBaseDir(dir, kind) {
+  if (!/^[\w.-]+$/.test(dir)) throw Object.assign(new Error('bad mod dir'), { status: 400 });
+  return kind === 'official' ? `${OFFICIAL_MODS_DIR}/Workshop/${dir}` : `${MODS_DIR}/${dir}`;
+}
+
+async function listModConfigs(server, dir, kind) {
+  const base = modBaseDir(dir, kind);
+  let out = '';
+  try {
+    out = await dockerctl.exec(server.containerName,
+      ['sh', '-c', `find ${q(base)} -type f -size -262144c 2>/dev/null | sort`]);
+  } catch { /* mod dir missing */ }
+  const files = out.trim().split('\n').filter(Boolean)
+    .map((f) => f.slice(base.length + 1))
+    .filter((rel) => rel && !rel.split('/').some((p) => p.startsWith('.')))
+    .filter((rel) => CONFIG_BASENAME_RE.test(rel.split('/').pop()));
+  return { base, files };
+}
+
+async function readModConfig(server, dir, kind, rel) {
+  const { base, files } = await listModConfigs(server, dir, kind);
+  if (!files.includes(rel)) throw Object.assign(new Error('not an editable config file of this mod'), { status: 404 });
+  return dockerctl.exec(server.containerName, ['cat', `${base}/${rel}`]);
+}
+
+async function writeModConfig(server, dir, kind, rel, content) {
+  const { base, files } = await listModConfigs(server, dir, kind);
+  if (!files.includes(rel)) throw Object.assign(new Error('not an editable config file of this mod'), { status: 404 });
+  const full = `${base}/${rel}`;
+  await dockerctl.exec(server.containerName, ['sh', '-c', `cp ${q(full)} ${q(full + '.mgr-bak')}`]);
+  await dockerctl.execWriteFile(server.containerName, full, Buffer.from(String(content), 'utf8'));
+  return { ok: true, backup: `${rel}.mgr-bak`, restartRequired: true };
+}
+
 module.exports = {
   searchWorkshop, getDetails, listInstalled, installFromWorkshop, installFromUpload, removeMod,
   steamCreds, testSteamLogin, validateNexusKey, nexusBrowse, installFromNexus,
   startQrLogin, qrLoginStatus, modPlatform, readStoredSteamUsername, pendingModChanges,
+  listModConfigs, readModConfig, writeModConfig,
 };

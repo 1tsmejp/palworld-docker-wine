@@ -10,7 +10,7 @@ const { readEnv } = require('./compose');
 const { setSecrets, secretsStatus } = require('./secrets');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '1mb' })); // mod config edits can exceed the 100kb default
 
 // Optional basic auth: set MANAGER_PASSWORD to enable.
 const PASSWORD = process.env.MANAGER_PASSWORD;
@@ -350,6 +350,31 @@ app.post('/api/servers/:id/mods/upload', express.raw({ type: '*/*', limit: '500m
   const modName = req.query.modName ? String(req.query.modName) : null;
   if (!req.body || !req.body.length) { const e = new Error('empty upload'); e.status = 400; throw e; }
   res.json(await mods.installFromUpload(server, filename, req.body, modName));
+}));
+
+// ---- mod config files (feature toggles etc.) ----------------------------
+app.get('/api/servers/:id/mods/:dir/configs', wrap(async (req, res) => {
+  const server = getServer(req.params.id);
+  const kind = req.query.kind === 'pak' ? 'pak' : 'official';
+  const { files } = await mods.listModConfigs(server, req.params.dir, kind);
+  res.json({ files });
+}));
+
+app.get('/api/servers/:id/mods/:dir/config-file', wrap(async (req, res) => {
+  const server = getServer(req.params.id);
+  const kind = req.query.kind === 'pak' ? 'pak' : 'official';
+  res.json({ content: await mods.readModConfig(server, req.params.dir, kind, String(req.query.path || '')) });
+}));
+
+app.put('/api/servers/:id/mods/:dir/config-file', wrap(async (req, res) => {
+  const server = getServer(req.params.id);
+  const kind = req.query.kind === 'pak' ? 'pak' : 'official';
+  const { path: rel, content } = req.body || {};
+  if (typeof content !== 'string') { const e = new Error('content (string) required'); e.status = 400; throw e; }
+  if (content.length > 256 * 1024) { const e = new Error('file too large (256 KB max)'); e.status = 400; throw e; }
+  const result = await mods.writeModConfig(server, req.params.dir, kind, String(rel || ''), content);
+  appendHistory('mods', { serverId: server.id, action: 'config-edit', mod: req.params.dir, file: rel });
+  res.json(result);
 }));
 
 app.delete('/api/servers/:id/mods/:dir', wrap(async (req, res) => {

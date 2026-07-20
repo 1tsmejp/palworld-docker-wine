@@ -71,6 +71,12 @@ input, select, textarea { font: inherit; }
   position: fixed; inset: 0; background: rgba(4, 8, 14, .6); z-index: 49;
 }
 #topbar .title-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.title-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.icon-btn {
+  background: none; border: none; color: var(--muted);
+  font-size: .95rem; padding: 4px 6px; border-radius: 6px; line-height: 1;
+}
+.icon-btn:hover { color: var(--accent); background: var(--panel); }
 
 /* ---------- main ---------- */
 #main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -105,6 +111,7 @@ input, select, textarea { font: inherit; }
 #view { padding: 22px 28px 80px; }
 
 /* ---------- cards / stats ---------- */
+.srv-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
 .stat {
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);

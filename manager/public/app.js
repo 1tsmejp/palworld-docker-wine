@@ -254,6 +254,10 @@ async function renderOverview(v, s) {
   }
   const m = s.metrics;
   v.innerHTML = `
+    <div class="srv-actions">
+      <button class="btn" id="restart-server">⟳ Restart</button>
+      <button class="btn danger" id="stop-server">⏹ Stop server</button>
+    </div>
     <div class="stat-grid">
       <div class="stat"><div class="v">${m ? `${m.currentplayernum}/${m.maxplayernum}` : '—'}</div><div class="l">Players</div></div>
       <div class="stat"><div class="v">${m ? m.serverfps : '—'}</div><div class="l">Server FPS</div></div>
@@ -275,6 +279,39 @@ async function renderOverview(v, s) {
         <tr><td class="muted">REST API</td><td class="mono">${esc(s.apiUrl)}</td></tr>
       </table>
     </div>`;
+  const online = m ? m.currentplayernum : 0;
+  $('#stop-server').onclick = async () => {
+    const ok = await confirmModal({
+      title: `Stop "${s.name}"?`,
+      body: `<p>The world is saved first, then the container is stopped.${online ? ` <b>${online} player${online === 1 ? '' : 's'} online</b> will be disconnected.` : ''}</p>`,
+      confirmText: 'Stop server', danger: true,
+    });
+    if (!ok) return;
+    const btn = $('#stop-server');
+    btn.disabled = true; btn.textContent = 'Stopping…';
+    try {
+      await api(`/servers/${s.id}/stop`, { method: 'POST', body: {} });
+      toast('Server stopped', 'ok');
+      await refreshServers();
+      renderView();
+    } catch (e) { btn.disabled = false; btn.textContent = '⏹ Stop server'; toast('Stop failed: ' + e.message, 'err'); }
+  };
+  $('#restart-server').onclick = async () => {
+    const ok = await confirmModal({
+      title: `Restart "${s.name}"?`,
+      body: `<p>The world is saved first, then the server restarts.${online ? ` <b>${online} player${online === 1 ? '' : 's'} online</b> will be disconnected.` : ''}</p>
+             <p class="muted" style="font-size:.78rem;margin-top:8px">For a restart with an in-game countdown warning, use the Deploy tab.</p>`,
+      confirmText: 'Restart',
+    });
+    if (!ok) return;
+    const btn = $('#restart-server');
+    btn.disabled = true; btn.textContent = 'Restarting…';
+    try {
+      await api(`/servers/${s.id}/restart`, { method: 'POST', body: {} });
+      toast('Server restarting…', 'ok');
+      setTimeout(refreshServers, 5000);
+    } catch (e) { btn.disabled = false; btn.textContent = '⟳ Restart'; toast('Restart failed: ' + e.message, 'err'); }
+  };
   try {
     const p = await api(`/servers/${s.id}/players`);
     const players = p.players || [];
@@ -1355,6 +1392,40 @@ async function renderLogs(v, s) {
   $('#logs-refresh').onclick = load;
   load();
 }
+
+// ---------------------------------------------------------------- rename
+function renameServerModal(s) {
+  const root = $('#modal-root');
+  root.innerHTML = `
+    <div class="modal-back"><div class="modal">
+      <h3>Rename server</h3>
+      <p class="muted" style="font-size:.78rem;margin-bottom:12px">
+        Changes the display name in the manager only. The in-game name is the
+        <b>ServerName</b> setting in the Settings tab (needs a deploy to apply).
+      </p>
+      <div class="field"><label>Display name</label><input type="text" id="rn-name" value="${esc(s.name)}" maxlength="60"></div>
+      <div class="actions">
+        <button class="btn ghost" id="rn-cancel">Cancel</button>
+        <button class="btn primary" id="rn-save">Save</button>
+      </div>
+    </div></div>`;
+  const save = async () => {
+    const name = $('#rn-name').value.trim();
+    if (!name) { toast('Name cannot be empty', 'err'); return; }
+    try {
+      await api(`/servers/${s.id}`, { method: 'PATCH', body: { name } });
+      root.innerHTML = '';
+      toast('Server renamed', 'ok');
+      await refreshServers();
+    } catch (e) { toast('Rename failed: ' + e.message, 'err'); }
+  };
+  $('#rn-cancel').onclick = () => { root.innerHTML = ''; };
+  $('#rn-save').onclick = save;
+  $('#rn-name').onkeydown = (e) => { if (e.key === 'Enter') save(); };
+  $('#rn-name').focus();
+  $('#rn-name').select();
+}
+$('#rename-btn').onclick = () => { const s = currentServer(); if (s) renameServerModal(s); };
 
 // ---------------------------------------------------------------- mobile sidebar drawer
 function setSidebar(open) {

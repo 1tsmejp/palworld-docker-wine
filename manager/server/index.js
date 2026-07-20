@@ -1,6 +1,6 @@
 const express = require('express');
 const path = require('path');
-const { loadServers, loadCannedMessages, saveCannedMessages, getServer, appendHistory, readHistory } = require('./config');
+const { loadServers, saveServers, loadCannedMessages, saveCannedMessages, getServer, appendHistory, readHistory } = require('./config');
 const { PalApi } = require('./palapi');
 const { dockerctl } = require('./dockerctl');
 const { mergedSettings, validateUpdates } = require('./schema');
@@ -54,6 +54,40 @@ app.post('/api/servers/:id/start', wrap(async (req, res) => {
   await dockerctl.composeUp(server, false);
   appendHistory('provisioning', { action: 'start', serverId: server.id });
   res.json({ ok: true, note: 'starting — first boot downloads the game server, which can take several minutes' });
+}));
+
+// Rename: updates the manager's display name only. The in-game name is the
+// ServerName setting (Settings tab), which requires a deploy to change.
+app.patch('/api/servers/:id', wrap(async (req, res) => {
+  const name = String((req.body || {}).name || '').trim();
+  if (!name || name.length > 60) { const e = new Error('name required (max 60 chars)'); e.status = 400; throw e; }
+  const data = loadServers();
+  const s = data.servers.find((x) => x.id === req.params.id);
+  if (!s) { const e = new Error(`Unknown server: ${req.params.id}`); e.status = 404; throw e; }
+  s.name = name;
+  saveServers(data);
+  appendHistory('provisioning', { action: 'rename', serverId: s.id, name });
+  res.json({ ok: true, name });
+}));
+
+// Graceful stop: save the world (when the REST API is reachable), then stop
+// the container. It stays created, so Start brings it back with compose up.
+app.post('/api/servers/:id/stop', wrap(async (req, res) => {
+  const server = getServer(req.params.id);
+  try { await new PalApi(server).save(); } catch { /* offline or paused — stop anyway */ }
+  await dockerctl.composeStop(server);
+  appendHistory('provisioning', { action: 'stop', serverId: server.id });
+  res.json({ ok: true });
+}));
+
+// Quick restart (world saved first when possible). For a restart with an
+// in-game countdown announcement, use the deploy flow instead.
+app.post('/api/servers/:id/restart', wrap(async (req, res) => {
+  const server = getServer(req.params.id);
+  try { await new PalApi(server).save(); } catch { /* offline or paused */ }
+  await dockerctl.composeRestart(server);
+  appendHistory('provisioning', { action: 'restart', serverId: server.id });
+  res.json({ ok: true });
 }));
 
 // ---- servers & live status --------------------------------------------------

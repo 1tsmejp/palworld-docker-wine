@@ -107,7 +107,13 @@ function validateUpdates(updates, server = null) {
  */
 // Image-infrastructure env vars the Wine image's entrypoint actually honors —
 // the rest of the image-scope catalog is thijsvanloef-image-only.
-const WINE_SUPPORTED_IMAGE_ENVS = new Set(['UPDATE_ON_BOOT', 'TZ', 'COMMUNITY', 'QUERY_PORT']);
+const WINE_DISCORD_EVENTS = ['PRE_UPDATE_BOOT', 'POST_UPDATE_BOOT', 'PRE_START', 'PRE_SHUTDOWN', 'POST_SHUTDOWN', 'PLAYER_JOIN', 'PLAYER_LEAVE'];
+const WINE_SUPPORTED_IMAGE_ENVS = new Set([
+  'UPDATE_ON_BOOT', 'TZ', 'COMMUNITY', 'QUERY_PORT',
+  'AUTO_PAUSE_ENABLED', 'AUTO_PAUSE_TIMEOUT_EST', 'AUTO_PAUSE_LOG',
+  'DISCORD_WEBHOOK_URL', 'DISCORD_SUPPRESS_NOTIFICATIONS', 'DISCORD_CONNECT_TIMEOUT', 'DISCORD_MAX_TIMEOUT',
+  ...WINE_DISCORD_EVENTS.flatMap((ev) => [`DISCORD_${ev}_MESSAGE_ENABLED`, `DISCORD_${ev}_MESSAGE`, `DISCORD_${ev}_MESSAGE_URL`]),
+]);
 
 function mergedSettings(server, runningEnv = null) {
   const { schema } = bySetting();

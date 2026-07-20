@@ -33,6 +33,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip \
  && chmod +x /usr/local/bin/DepotDownloader && rm /tmp/dd.zip \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Auto-pause + Discord webhook tooling: REST polling (curl/jq) and the
+# game-port wake sniffer (tcpdump).
+RUN apt-get update && apt-get install -y --no-install-recommends curl jq tcpdump \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 RUN useradd -m -u 1000 steam
 COPY entrypoint.sh /entrypoint.sh
 COPY PalWorldSettings.ini.template /home/steam/PalWorldSettings.ini.template

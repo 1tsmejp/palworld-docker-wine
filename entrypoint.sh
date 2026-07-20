@@ -7,6 +7,28 @@ set -e
 
 log() { echo "[wine-test] $*"; }
 
+# ---------------------------------------------------------------- discord webhooks
+# Same env contract as thijsvanloef/palworld-server-docker (subset):
+# DISCORD_WEBHOOK_URL + DISCORD_<EVENT>_MESSAGE / _MESSAGE_ENABLED / _MESSAGE_URL
+# for PRE_UPDATE_BOOT, POST_UPDATE_BOOT, PRE_START, PRE_SHUTDOWN, POST_SHUTDOWN,
+# PLAYER_JOIN, PLAYER_LEAVE. player_name is substituted in join/leave messages.
+discord_send() { # $1 = event key, $2 = default message, $3 = player name (optional)
+  local ev="$1" def="$2" sub="${3:-}"
+  local url_var="DISCORD_${ev}_MESSAGE_URL" en_var="DISCORD_${ev}_MESSAGE_ENABLED" msg_var="DISCORD_${ev}_MESSAGE"
+  local url="${!url_var}"; [ -z "$url" ] && url="${DISCORD_WEBHOOK_URL:-}"
+  [ -z "$url" ] && return 0
+  local enabled="${!en_var:-true}"
+  [ "${enabled,,}" = "true" ] || return 0
+  local msg="${!msg_var:-$def}"
+  [ -n "$sub" ] && msg="${msg//player_name/$sub}"
+  local flags=0
+  [ "${DISCORD_SUPPRESS_NOTIFICATIONS,,}" = "true" ] && flags=4096
+  curl -sf -m "${DISCORD_MAX_TIMEOUT:-30}" --connect-timeout "${DISCORD_CONNECT_TIMEOUT:-30}" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -nc --arg c "$msg" --argjson f "$flags" '{content: $c, flags: $f}')" \
+    "$url" >/dev/null 2>&1 || log "discord: webhook failed for $ev"
+}
+
 STEAMCMD=/usr/games/steamcmd
 SERVER_DIR=/palworld
 WIN_CFG_DIR="$SERVER_DIR/Pal/Saved/Config/WindowsServer"
@@ -15,12 +37,14 @@ EXE_DIR="$SERVER_DIR/Pal/Binaries/Win64"
 # ---------------------------------------------------------------- install/update
 if [ ! -f "$SERVER_DIR/PalServer.exe" ] || [ "${UPDATE_ON_BOOT,,}" = "true" ]; then
   log "Installing/updating Palworld WINDOWS dedicated server (app 2394010)…"
+  discord_send PRE_UPDATE_BOOT 'Server is updating...'
   $STEAMCMD +@sSteamCmdForcePlatformType windows \
     +force_install_dir "$SERVER_DIR" \
     +login anonymous \
     +app_update 2394010 validate \
     +quit
   log "Install/update done."
+  discord_send POST_UPDATE_BOOT 'Server update complete!'
 fi
 
 # ---------------------------------------------------------------- settings (env -> ini)
@@ -178,8 +202,63 @@ if [ -n "${WORKSHOP_MODS:-}" ]; then
 fi
 
 # ---------------------------------------------------------------- run under wine
-cleanup() { log "SIGTERM — stopping wine…"; wineserver -k || true; wait; exit 0; }
+cleanup() {
+  log "SIGTERM — stopping wine…"
+  discord_send PRE_SHUTDOWN 'Server is shutting down...'
+  [ -n "${MONITOR_PID:-}" ] && kill "$MONITOR_PID" 2>/dev/null
+  # a paused (SIGSTOPped) game can't handle shutdown — resume it first
+  pkill -CONT -f 'PalServer-Win64-Shipping-Cmd.exe' 2>/dev/null || true
+  wineserver -k || true
+  wait
+  discord_send POST_SHUTDOWN 'Server is stopped!'
+  exit 0
+}
 trap cleanup SIGTERM SIGINT
+
+# ---------------------------------------------------------------- monitor: discord join/leave + auto pause
+# Polls the REST API for the player list. Feeds two features:
+#  - Discord PLAYER_JOIN / PLAYER_LEAVE messages (diff between polls)
+#  - AUTO_PAUSE_ENABLED: saves the world ~30s after the server empties, then
+#    SIGSTOPs the game process after AUTO_PAUSE_TIMEOUT_EST seconds (world
+#    time and CPU stop). Any UDP packet on the game port resumes it — a
+#    connecting client retries, so the first knock wakes the server.
+monitor_loop() {
+  local interval=10 idle=0 saved=0
+  local rest="http://127.0.0.1:${REST_API_PORT:-8212}/v1/api"
+  local timeout="${AUTO_PAUSE_TIMEOUT_EST:-180}"
+  local prev="" resp names count
+  while sleep "$interval"; do
+    resp=$(curl -sf -m 5 -u "admin:${ADMIN_PASSWORD}" "$rest/players" 2>/dev/null) || continue
+    names=$(printf '%s' "$resp" | jq -r '.players[].name' 2>/dev/null | sort) || continue
+    count=$(printf '%s' "$names" | grep -c . || true)
+    if [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then
+      while IFS= read -r p; do
+        [ -n "$p" ] && discord_send PLAYER_JOIN 'player_name has joined Palworld!' "$p"
+      done < <(comm -13 <(printf '%s\n' "$prev") <(printf '%s\n' "$names"))
+      while IFS= read -r p; do
+        [ -n "$p" ] && discord_send PLAYER_LEAVE 'player_name has left Palworld.' "$p"
+      done < <(comm -23 <(printf '%s\n' "$prev") <(printf '%s\n' "$names"))
+    fi
+    prev="$names"
+    if [ "${AUTO_PAUSE_ENABLED,,}" = "true" ]; then
+      if [ "$count" -eq 0 ]; then idle=$((idle + interval)); else idle=0; saved=0; fi
+      if [ "$idle" -ge 30 ] && [ "$saved" -eq 0 ]; then
+        [ "${AUTO_PAUSE_LOG,,}" != "false" ] && log "auto-pause: server empty — saving world"
+        curl -sf -m 60 -u "admin:${ADMIN_PASSWORD}" -X POST "$rest/save" >/dev/null 2>&1 || true
+        saved=1
+      fi
+      if [ "$idle" -ge "$timeout" ]; then
+        curl -sf -m 60 -u "admin:${ADMIN_PASSWORD}" -X POST "$rest/save" >/dev/null 2>&1 || true
+        [ "${AUTO_PAUSE_LOG,,}" != "false" ] && log "auto-pause: empty for ${idle}s — pausing game process"
+        pkill -STOP -f 'PalServer-Win64-Shipping-Cmd.exe' || true
+        tcpdump -i any -c 1 -q "udp and dst port 8211" >/dev/null 2>&1
+        pkill -CONT -f 'PalServer-Win64-Shipping-Cmd.exe' || true
+        [ "${AUTO_PAUSE_LOG,,}" != "false" ] && log "auto-pause: traffic on game port — resumed"
+        idle=0 saved=0
+      fi
+    fi
+  done
+}
 
 WINE_BIN=$(command -v wine64 || command -v wine)
 
@@ -209,7 +288,17 @@ START_OPTIONS=(-useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS)
 START_OPTIONS+=(-queryport="${QUERY_PORT:-27015}")
 if [ "${COMMUNITY,,}" = "true" ]; then START_OPTIONS+=(-publiclobby); fi
 log "Starting $GAME_BIN under Wine…"
+discord_send PRE_START 'Server has been started!'
 cd "$SERVER_DIR"
 "$WINE_BIN" "$GAME_BIN" "${START_OPTIONS[@]}" &
 SERVER_PID=$!
+if [ "${AUTO_PAUSE_ENABLED,,}" = "true" ] || [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then
+  if [ "${REST_API_ENABLED,,}" = "true" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
+    monitor_loop &
+    MONITOR_PID=$!
+    log "monitor started (auto-pause: ${AUTO_PAUSE_ENABLED:-false}, discord: $([ -n "${DISCORD_WEBHOOK_URL:-}" ] && echo on || echo off))"
+  else
+    log "monitor NOT started — auto-pause/discord need REST_API_ENABLED=True and ADMIN_PASSWORD"
+  fi
+fi
 wait $SERVER_PID

@@ -107,7 +107,7 @@ function validateUpdates(updates, server = null) {
  */
 // Image-infrastructure env vars the Wine image's entrypoint actually honors —
 // the rest of the image-scope catalog is thijsvanloef-image-only.
-const WINE_SUPPORTED_IMAGE_ENVS = new Set(['UPDATE_ON_BOOT', 'TZ']);
+const WINE_SUPPORTED_IMAGE_ENVS = new Set(['UPDATE_ON_BOOT', 'TZ', 'COMMUNITY']);
 
 function mergedSettings(server, runningEnv = null) {
   const { schema } = bySetting();

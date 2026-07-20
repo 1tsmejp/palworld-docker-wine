@@ -171,6 +171,8 @@ const overlay = {
 // scope:'image' -> validated against container env after deploy, not REST API.
 const CRON = { pattern: '^\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+$', patternHint: 'must be a 5-field cron expression, e.g. 0 4 * * *' };
 const IMAGE_SETTINGS = [
+  // Server visibility (launch flag, not an ini key — hence image scope)
+  { env: 'COMMUNITY', type: 'boolean', default: false, cat: 'Network & Access', desc: 'List the server in the community server browser (-publiclobby). Use together with SERVER_PASSWORD, and make sure your game port is forwarded.' },
   // Auto pause
   { env: 'AUTO_PAUSE_ENABLED', type: 'boolean', default: false, cat: 'Image: Auto Pause', desc: 'Pause the server process when no players are online (world time stops; wakes on connection).', requires: { ENABLE_PLAYER_LOGGING: true, REST_API_ENABLED: true } },
   { env: 'AUTO_PAUSE_TIMEOUT_EST', type: 'integer', default: 180, min: 10, max: 86400, step: 10, cat: 'Image: Auto Pause', desc: 'Seconds after the last player leaves before the server pauses.' },

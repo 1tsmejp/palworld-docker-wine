@@ -1303,6 +1303,15 @@
       "scope": "game"
     },
     {
+      "env": "COMMUNITY",
+      "iniKey": null,
+      "type": "boolean",
+      "default": false,
+      "category": "Network & Access",
+      "description": "List the server in the community server browser (-publiclobby). Use together with SERVER_PASSWORD, and make sure your game port is forwarded.",
+      "scope": "image"
+    },
+    {
       "env": "AUTO_PAUSE_ENABLED",
       "iniKey": null,
       "type": "boolean",

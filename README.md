@@ -49,6 +49,10 @@ docker logs -f palworld-wine     # first boot downloads ~6 GB via steamcmd
 - Game server only, no manager: `docker compose up -d palworld-wine`
 - Manager first, launch later: `docker compose up -d manager`, then configure
   everything in the UI and press **Launch**
+- **Running on a non-default external port** (e.g. a second server mapped
+  `8311:8211/udp`): also set `PUBLIC_PORT` to the external port — it's what
+  the server advertises to Steam, and the default (8211) will point players
+  at the wrong server. Forward the port as **UDP**.
 
 ## Installing mods
 

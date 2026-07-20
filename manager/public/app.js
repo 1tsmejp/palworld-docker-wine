@@ -1318,7 +1318,8 @@ async function renderBackups(v, s) {
             The target's world with the same GUID is <b>overwritten</b>, its active world is switched, and it restarts to load it.</p>
             <div class="field"><label>Target server</label>
               <select id="mig-target">${others.map((o) => `<option value="${o.id}">${esc(o.name)}</option>`).join('')}</select></div>
-            <div class="field"><label><input type="checkbox" id="mig-newguid" checked> Assign a new world GUID on the target (keeps each server's world fully independent)</label></div>
+            <div class="field"><label><input type="checkbox" id="mig-newguid"> Assign a new world GUID on the target</label>
+              <p class="muted" style="font-size:.72rem;margin-top:4px">⚠ A new GUID makes clients treat this as an unexplored world: players keep their characters and fast-travel unlocks, but their map exploration and discovered fast-travel icons reset. Keep the same GUID when cutting a community over to this server.</p></div>
             <div class="field"><label><input type="checkbox" id="mig-stripwo" checked> Remove WorldOption.sav if present (so the target's env settings stay in control)</label></div>
             <div class="field"><label><input type="checkbox" id="mig-restart" checked> Restart target after migration (60s countdown announcement)</label></div>
             <div class="actions">
@@ -1355,7 +1356,8 @@ async function renderBackups(v, s) {
         <h3>Import world from ${esc(f.name)}?</h3>
         <p class="muted" style="font-size:.8rem">The imported world becomes this server's active world.
         The copy belongs to <b>${esc(s.name)}</b> only — it never affects the server it came from.</p>
-        <div class="field"><label><input type="checkbox" id="imp-newguid" checked> Assign a new world GUID (keeps this server's world independent of the source)</label></div>
+        <div class="field"><label><input type="checkbox" id="imp-newguid"> Assign a new world GUID</label>
+          <p class="muted" style="font-size:.72rem;margin-top:4px">⚠ A new GUID makes clients treat this as an unexplored world: players keep their characters and fast-travel unlocks, but their map exploration and discovered fast-travel icons reset. Keep the same GUID when cutting a community over to this server.</p></div>
         <div class="field"><label><input type="checkbox" id="imp-stripwo" checked> Remove WorldOption.sav if present (so this server's env settings stay in control)</label></div>
         <div class="field"><label><input type="checkbox" id="imp-restart" checked> Restart after import (60s countdown announcement)</label></div>
         <div class="actions">

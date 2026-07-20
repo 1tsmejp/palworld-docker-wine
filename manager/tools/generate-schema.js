@@ -112,7 +112,7 @@ const overlay = {
   SERVER_DESCRIPTION: { cat: 'General', desc: 'Server description shown in browser.' },
   ADMIN_PASSWORD: { cat: 'Server & Admin', sensitive: true, desc: 'Admin password (also used for RCON / REST API auth).' },
   SERVER_PASSWORD: { cat: 'Network & Access', sensitive: true, desc: 'Password required to join the server.' },
-  PUBLIC_PORT: { cat: 'Network & Access', min: 1024, max: 65535, step: 1, desc: 'Public port advertised to the community browser.' },
+  PUBLIC_PORT: { cat: 'Network & Access', min: 1024, max: 65535, step: 1, desc: 'Public game port advertised to the community browser. On deploy the manager also rewrites the stack\'s game-port mapping so the host listens on this port (make sure your router forwards it).' },
   PUBLIC_IP:   { cat: 'Network & Access', desc: 'Public IP advertised to the community browser (auto-detected if empty).' },
   RCON_ENABLED: { cat: 'Server & Admin', desc: 'Enable RCON (REST API is preferred).' },
   RCON_PORT:    { cat: 'Server & Admin', min: 1024, max: 65535, step: 1, desc: 'RCON port.' },
@@ -173,7 +173,7 @@ const CRON = { pattern: '^\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+$', patternHint: '
 const IMAGE_SETTINGS = [
   // Server visibility (launch flag, not an ini key — hence image scope)
   { env: 'COMMUNITY', type: 'boolean', default: false, cat: 'Network & Access', desc: 'List the server in the community server browser (-publiclobby). Use together with SERVER_PASSWORD, and make sure your game port is forwarded.' },
-  { env: 'QUERY_PORT', type: 'integer', default: 27015, min: 1024, max: 65535, step: 1, cat: 'Network & Access', desc: 'Steam query port (-queryport launch flag). Must match the port mapping in the compose file — use a distinct one per server on a host.' },
+  { env: 'QUERY_PORT', type: 'integer', default: 27015, min: 1024, max: 65535, step: 1, cat: 'Network & Access', desc: 'Steam query port (-queryport launch flag). The compose port mapping is rewritten to match on deploy; use a distinct one per server on a host.' },
   // Auto pause
   { env: 'AUTO_PAUSE_ENABLED', type: 'boolean', default: false, cat: 'Image: Auto Pause', desc: 'Pause the server process when no players are online (world time stops; wakes on connection).', requires: { ENABLE_PLAYER_LOGGING: true, REST_API_ENABLED: true } },
   { env: 'AUTO_PAUSE_TIMEOUT_EST', type: 'integer', default: 180, min: 10, max: 86400, step: 10, cat: 'Image: Auto Pause', desc: 'Seconds after the last player leaves before the server pauses.' },

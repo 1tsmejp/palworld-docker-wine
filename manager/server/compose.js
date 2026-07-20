@@ -77,6 +77,43 @@ function updateEnv(composeFile, serviceName, updates) {
   return backupPath;
 }
 
+/**
+ * Rewrites the service's `ports:` entries to follow a port cutover.
+ * - gamePort: the host side of the game mapping moves to the new value; the
+ *   container side stays (the game always binds 8211 inside the container).
+ * - queryPort: both sides move (the server binds QUERY_PORT inside too).
+ * Returns a list of human-readable rewrites (empty if nothing matched).
+ */
+function syncPorts(composeFile, serviceName, { gamePort, queryPort } = {}) {
+  const text = fs.readFileSync(composeFile, 'utf8');
+  const doc = YAML.parseDocument(text);
+  const node = doc.getIn(['services', serviceName, 'ports']);
+  if (!node || !YAML.isSeq(node)) throw new Error(`No ports list for service "${serviceName}"`);
+
+  const parse = (s) => {
+    const m = String(s).match(/^(\d+):(\d+)(?:\/(udp|tcp))?$/);
+    return m ? { host: Number(m[1]), container: Number(m[2]), proto: m[3] || 'tcp' } : null;
+  };
+  const rewrites = [];
+  const rewrite = (item, next) => {
+    const before = String(item.value ?? item);
+    if (YAML.isScalar(item)) item.value = next; // keeps any trailing comment
+    rewrites.push(`${before} → ${next}`);
+  };
+
+  for (const item of node.items) {
+    const p = parse(YAML.isScalar(item) ? item.value : item);
+    if (!p || p.proto !== 'udp') continue;
+    if (queryPort && p.host === queryPort.old && queryPort.old !== queryPort.new) {
+      rewrite(item, `${queryPort.new}:${queryPort.new}/udp`);
+    } else if (gamePort && p.host === gamePort.old && gamePort.old !== gamePort.new) {
+      rewrite(item, `${gamePort.new}:${p.container}/udp`);
+    }
+  }
+  if (rewrites.length) fs.writeFileSync(composeFile, doc.toString());
+  return rewrites;
+}
+
 function formatScalar(value) {
   // Booleans are written as quoted "True"/"False" strings — the convention the
   // image README documents for PalWorldSettings values — so YAML/compose never
@@ -96,4 +133,4 @@ function pruneBackups(baseName, keep = 30) {
   while (files.length > keep) fs.unlinkSync(path.join(dir, files.shift()));
 }
 
-module.exports = { readEnv, updateEnv };
+module.exports = { readEnv, updateEnv, syncPorts };

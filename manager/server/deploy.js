@@ -1,9 +1,9 @@
 const crypto = require('crypto');
 const { PalApi } = require('./palapi');
-const { updateEnv } = require('./compose');
+const { readEnv, updateEnv, syncPorts } = require('./compose');
 const { dockerctl } = require('./dockerctl');
 const { validateUpdates, compareWithLive, compareImageEnv } = require('./schema');
-const { appendHistory } = require('./config');
+const { appendHistory, loadServers, saveServers } = require('./config');
 
 const jobs = new Map(); // id -> job
 
@@ -108,8 +108,35 @@ async function startDeploy(server, opts) {
       // --- write compose ------------------------------------------------
       if (hasUpdates) {
         const st = step(job, 'Update docker-compose.yml');
+        // Old effective port values, read before the env update, drive the
+        // port-mapping cutover below.
+        const oldEnv = readEnv(server.composeFile, server.serviceName);
         const backup = updateEnv(server.composeFile, server.serviceName, normalized);
         st.ok(`${Object.keys(normalized).length} setting(s) written, backup: ${backup.split('/').pop()}`);
+
+        // --- port cutover: keep `ports:` mappings in step with the envs ---
+        if ('PUBLIC_PORT' in normalized || 'QUERY_PORT' in normalized) {
+          const st2 = step(job, 'Sync compose port mappings');
+          try {
+            const cut = {};
+            if ('PUBLIC_PORT' in normalized && normalized.PUBLIC_PORT != null) {
+              cut.gamePort = { old: Number(oldEnv.PUBLIC_PORT || server.gamePort || 8211), new: Number(normalized.PUBLIC_PORT) };
+            }
+            if ('QUERY_PORT' in normalized && normalized.QUERY_PORT != null) {
+              cut.queryPort = { old: Number(oldEnv.QUERY_PORT || 27015), new: Number(normalized.QUERY_PORT) };
+            }
+            const rewrites = syncPorts(server.composeFile, server.serviceName, cut);
+            if (cut.gamePort && rewrites.length) {
+              // keep the registry's host-port bookkeeping (used for conflict checks)
+              const data = loadServers();
+              const entry = data.servers.find((x) => x.id === server.id);
+              if (entry && entry.gamePort) { entry.gamePort = cut.gamePort.new; saveServers(data); }
+            }
+            st2.ok(rewrites.length ? rewrites.join(', ') : 'mappings already match — nothing to rewrite');
+          } catch (e) {
+            st2.warn(`could not sync port mappings (${e.message}) — update the ports: section manually`);
+          }
+        }
       }
 
       if (reboot) {

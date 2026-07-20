@@ -167,6 +167,8 @@ function addServerWizard() {
 }
 
 function selectServer(id) {
+  document.body.classList.remove('sidebar-open');
+  $('#menu-btn')?.setAttribute('aria-expanded', 'false');
   if (state.serverId !== id) {
     state.serverId = id;
     state.settings = null;
@@ -1353,6 +1355,14 @@ async function renderLogs(v, s) {
   $('#logs-refresh').onclick = load;
   load();
 }
+
+// ---------------------------------------------------------------- mobile sidebar drawer
+function setSidebar(open) {
+  document.body.classList.toggle('sidebar-open', open);
+  $('#menu-btn').setAttribute('aria-expanded', String(open));
+}
+$('#menu-btn').onclick = () => setSidebar(!document.body.classList.contains('sidebar-open'));
+$('#sidebar-back').onclick = () => setSidebar(false);
 
 // ---------------------------------------------------------------- init
 (async function init() {

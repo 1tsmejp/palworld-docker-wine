@@ -326,7 +326,10 @@ app.get('/api/servers/:id/mods-pending', wrap(async (req, res) => {
 
 // ---- mods ---------------------------------------------------------------
 app.get('/api/mods/search', wrap(async (req, res) => {
-  res.json(await mods.searchWorkshop({ q: req.query.q || '', sort: req.query.sort || 'trend', page: req.query.page || 1, compat: req.query.compat || 'all' }));
+  res.json(await mods.searchWorkshop({
+    q: req.query.q || '', sort: req.query.sort || 'trend', page: req.query.page || 1,
+    compat: req.query.compat || 'all', hideClientOnly: req.query.hideClientOnly === '1',
+  }));
 }));
 
 app.get('/api/servers/:id/mods', wrap(async (req, res) => {

@@ -815,7 +815,7 @@ function drawJob(job) {
 }
 
 // ---------------------------------------------------------------- mods
-const modState = { q: '', sort: 'trend', page: 1, compat: 'pak', results: null, loading: false, forServer: null };
+const modState = { q: '', sort: 'trend', page: 1, compat: 'pak', hideClientOnly: true, results: null, loading: false, forServer: null };
 
 function fmtBytes(n) {
   if (!n) return '—';
@@ -919,6 +919,7 @@ async function renderMods(v, s) {
         <button class="chip ${modState.compat === 'unknown' ? 'active' : ''}" data-compat="unknown">❔ Untagged (verified at install)</button>
         <button class="chip ${modState.compat === 'windows' ? 'active' : ''}" data-compat="windows">🪟 Windows-only types</button>
         <button class="chip ${modState.compat === 'all' ? 'active' : ''}" data-compat="all">All</button>
+        <button class="chip ${modState.hideClientOnly ? 'active' : ''}" id="chip-hide-client" title="Hides UI-overlay mods (HUDs, ESP, minimaps) that only run on players' own PCs — a dedicated server can't use them. Heuristic; the installer still verifies Info.json.">🖥 Hide client-only</button>
         <span class="muted" id="compat-counts" style="font-size:.72rem"></span>
       </div>
       <div id="mods-creds-note"></div>
@@ -937,10 +938,10 @@ async function renderMods(v, s) {
     $('#mods-results').innerHTML = '<span class="muted">Searching Workshop…</span>';
     $('#mod-page').textContent = `page ${page}`;
     try {
-      modState.results = await api(`/mods/search?q=${encodeURIComponent(modState.q)}&sort=${modState.sort}&page=${page}&compat=${modState.compat}`);
+      modState.results = await api(`/mods/search?q=${encodeURIComponent(modState.q)}&sort=${modState.sort}&page=${page}&compat=${modState.compat}&hideClientOnly=${modState.hideClientOnly ? 1 : 0}`);
       const c = modState.results.counts;
       const cc = $('#compat-counts');
-      if (cc && c) cc.textContent = `this page: ${c.pak} pak · ${c.unknown} untagged · ${c.windows} windows-only`;
+      if (cc && c) cc.textContent = `this page: ${c.pak} pak · ${c.unknown} untagged · ${c.windows} windows-only${c.clientOnly ? ` · ${c.clientOnly} client-only${modState.hideClientOnly ? ' hidden' : ''}` : ''}`;
       drawModResults(s);
     } catch (e) { $('#mods-results').innerHTML = `<span class="val-bad">Workshop search failed: ${esc(e.message)}</span>`; }
   };
@@ -949,6 +950,11 @@ async function renderMods(v, s) {
     $$('#compat-chips [data-compat]').forEach((x) => x.classList.toggle('active', x === ch));
     doSearch(1);
   });
+  $('#chip-hide-client').onclick = () => {
+    modState.hideClientOnly = !modState.hideClientOnly;
+    $('#chip-hide-client').classList.toggle('active', modState.hideClientOnly);
+    doSearch(modState.page);
+  };
   $('#mod-go').onclick = () => doSearch(1);
   $('#mod-search').onkeydown = (e) => { if (e.key === 'Enter') doSearch(1); };
   $('#mod-sort').onchange = () => doSearch(1);
@@ -1325,7 +1331,7 @@ function drawModResults(s) {
             ${m.subscriptions != null ? `<span>👥 ${m.subscriptions}</span>` : ''}
             ${m.timeUpdated ? `<span>upd ${new Date(m.timeUpdated).toLocaleDateString()}</span>` : ''}
           </div>
-          <div>${compatBadge(m)}${m.tags.slice(0, 4).map((t) => `<span class="tag">${esc(t)}</span>`).join(' ')}</div>
+          <div>${compatBadge(m)}${m.clientOnly ? '<span class="tag" style="color:var(--amber)" title="Looks like a UI overlay — runs on players\' own PCs, not on a dedicated server">🖥 likely client-only</span> ' : ''}${m.tags.slice(0, 4).map((t) => `<span class="tag">${esc(t)}</span>`).join(' ')}</div>
           <div class="actions">
             <a class="btn small ghost" href="${esc(m.url)}" target="_blank">Steam ↗</a>
             <button class="btn small ${winOnly(m) ? '' : 'primary'}" data-install="${m.id}" data-title="${esc(m.title)}" ${winOnly(m) ? 'title="Tagged UE4SS/PalSchema/Lua — these mod types do not run on Linux servers"' : ''}>Install</button>

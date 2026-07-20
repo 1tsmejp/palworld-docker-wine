@@ -83,7 +83,17 @@ function classifyCompat(tags, title = '') {
   return 'unknown';
 }
 
-async function searchWorkshop({ q = '', sort = 'trend', page = 1, compat = 'all' }) {
+// Client-side overlay heuristic for the BROWSE list: "User Interface"-tagged
+// mods and HUD/ESP-style titles render on the player's screen — a dedicated
+// server can't run them. This is a pre-filter only; the definitive check
+// (Info.json IsServer rules) happens at install time.
+function likelyClientOnly(tags, title = '') {
+  const t = tags.join(' ').toLowerCase();
+  const ti = title.toLowerCase();
+  return /user interface/.test(t) || /\b(hud|esp|overlay|minimap|crosshair|locator)\b/.test(ti);
+}
+
+async function searchWorkshop({ q = '', sort = 'trend', page = 1, compat = 'all', hideClientOnly = false }) {
   const url = new URL('https://steamcommunity.com/workshop/browse/');
   url.searchParams.set('appid', APPID);
   url.searchParams.set('browsesort', SORTS[sort] || 'trend');
@@ -101,11 +111,15 @@ async function searchWorkshop({ q = '', sort = 'trend', page = 1, compat = 'all'
     if (!ids.includes(m[1])) ids.push(m[1]);
   }
   let items = ids.length ? await getDetails(ids) : [];
-  for (const it of items) it.compat = classifyCompat(it.tags, it.title);
-  const counts = { pak: 0, windows: 0, unknown: 0 };
-  for (const it of items) counts[it.compat]++;
+  for (const it of items) {
+    it.compat = classifyCompat(it.tags, it.title);
+    it.clientOnly = likelyClientOnly(it.tags, it.title);
+  }
+  const counts = { pak: 0, windows: 0, unknown: 0, clientOnly: 0 };
+  for (const it of items) { counts[it.compat]++; if (it.clientOnly) counts.clientOnly++; }
   if (compat !== 'all') items = items.filter((it) => it.compat === compat);
-  return { page: Number(page), sort, query: q, compat, counts, items };
+  if (hideClientOnly) items = items.filter((it) => !it.clientOnly);
+  return { page: Number(page), sort, query: q, compat, hideClientOnly, counts, items };
 }
 
 async function getDetails(ids) {

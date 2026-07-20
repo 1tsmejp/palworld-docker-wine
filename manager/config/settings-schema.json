@@ -1312,6 +1312,18 @@
       "scope": "image"
     },
     {
+      "env": "QUERY_PORT",
+      "iniKey": null,
+      "type": "integer",
+      "default": 27015,
+      "category": "Network & Access",
+      "description": "Steam query port (-queryport launch flag). Must match the port mapping in the compose file — use a distinct one per server on a host.",
+      "min": 1024,
+      "max": 65535,
+      "step": 1,
+      "scope": "image"
+    },
+    {
       "env": "AUTO_PAUSE_ENABLED",
       "iniKey": null,
       "type": "boolean",

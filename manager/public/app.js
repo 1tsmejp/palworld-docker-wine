@@ -1275,7 +1275,8 @@ async function loadInstalledMods(s) {
       ? `<table><tr><th>Mod</th><th>Type</th><th>Files</th><th>Source</th><th></th></tr>
         ${data.installed.map((m) => `<tr>
           <td>${m.meta ? `<a href="${esc(m.meta.url || '#')}" target="_blank">${esc(m.meta.title)}</a>` : esc(m.dir)}</td>
-          <td>${m.kind === 'official' ? '<span class="tag" style="color:var(--accent)">official</span>' : '<span class="tag">pak</span>'}</td>
+          <td>${m.kind === 'official' ? '<span class="tag" style="color:var(--accent)">official</span>' : '<span class="tag">pak</span>'}
+              ${m.serverSupported === false ? '<span class="tag" style="color:var(--amber)" title="Info.json has no IsServer install rule — this mod never loads on a dedicated server. Subscribe to it on your own PC instead.">⚠ client-only</span>' : ''}</td>
           <td class="mono" style="font-size:.72rem">${m.files.map(esc).join('<br>')}</td>
           <td>${esc(m.meta?.source || '')}</td>
           <td style="white-space:nowrap">
@@ -1352,6 +1353,9 @@ function drawModResults(s) {
       toast(`Installed ${what} — review & deploy to activate`, 'ok');
       if (r.missingDependencies && r.missingDependencies.length) {
         toast(`⚠ This mod requires: ${r.missingDependencies.join(', ')} — search the Workshop for them and install them too, or it will not run.`, 'err');
+      }
+      if (r.serverSupported === false) {
+        toast('⚠ Client-only mod: its Info.json has no IsServer install rule, so it never loads on a dedicated server. Players should subscribe to it on their own PCs instead.', 'err');
       }
       loadInstalledMods(s);
       refreshServers();

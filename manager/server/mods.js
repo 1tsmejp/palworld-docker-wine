@@ -167,9 +167,20 @@ async function listInstalled(server) {
       const out = await dockerctl.exec(server.containerName,
         ['sh', '-c', `ls -d ${OFFICIAL_MODS_DIR}/Workshop/*/ 2>/dev/null | xargs -rn1 basename`]);
       for (const dir of out.trim() ? out.trim().split('\n') : []) {
+        // A mod is server-capable only if some InstallRule has IsServer:true —
+        // client-only mods (HUD overlays etc.) are inert on a dedicated server.
+        let serverSupported = null;
+        try {
+          const info = JSON.parse(await dockerctl.exec(server.containerName,
+            ['cat', `${OFFICIAL_MODS_DIR}/Workshop/${dir}/Info.json`]));
+          if (Array.isArray(info.InstallRule)) {
+            serverSupported = info.InstallRule.some((r) => r && r.IsServer === true);
+          }
+        } catch { /* no Info.json — unknown */ }
         result.push({
           dir, kind: 'official',
           files: ['(official mod system)'],
+          serverSupported,
           meta: reg[`${server.id}:official:${dir}`] || null,
         });
       }
@@ -389,11 +400,14 @@ async function installFromWorkshop(server, publishedFileId) {
   const infoJson = infoOut.trim();
   if (modPlatform(server) === 'windows' && infoJson) {
     const modRoot = infoJson.replace(/\/Info\.json$/, '');
-    let packageName = null, dependencies = [];
+    let packageName = null, dependencies = [], serverSupported = null;
     try {
       const info = JSON.parse(await dockerctl.exec(c, ['cat', infoJson]));
       packageName = info.PackageName || null;
       dependencies = Array.isArray(info.Dependencies) ? info.Dependencies : [];
+      if (Array.isArray(info.InstallRule)) {
+        serverSupported = info.InstallRule.some((r) => r && r.IsServer === true);
+      }
     } catch { /* ignore */ }
     // Loader runtimes (UE4SS/PalSchema) are Workshop items themselves — on a
     // dedicated server they must be installed explicitly. Flag missing ones.
@@ -419,7 +433,7 @@ async function installFromWorkshop(server, publishedFileId) {
     writeRegistry(reg);
     syncWorkshopModsEnv(server, publishedFileId, true);
     logModChange(server, 'install', publishedFileId, detail && detail.title, 'official');
-    return { installed: publishedFileId, kind: 'official', packageName, dependencies, missingDependencies, restartRequired: true };
+    return { installed: publishedFileId, kind: 'official', packageName, dependencies, missingDependencies, serverSupported, restartRequired: true };
   }
 
   const found = await dockerctl.exec(c, ['sh', '-c', `find '${tmp}' -type f \\( -name '*.pak' -o -name '*.utoc' -o -name '*.ucas' \\) 2>/dev/null`]);

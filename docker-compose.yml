@@ -8,7 +8,8 @@ services:
     restart: unless-stopped
     stop_grace_period: 45s
     ports:
-      - "8211:8211/udp"   # game port
+      - "8211:8211/udp"   # game port (forward as UDP)
+      - "27015:27015/udp" # steam query port (forward as UDP)
       - "8212:8212/tcp"   # REST API — do NOT forward this port to the internet
     environment:
       SERVER_NAME: "My Palworld Server (Wine)"
@@ -20,6 +21,7 @@ services:
       REST_API_ENABLED: "True"
       REST_API_PORT: 8212
       UPDATE_ON_BOOT: "false"               # true = check for game updates each start
+      QUERY_PORT: 27015                     # steam query port; use a distinct one per server on a host
       # Palworld's atomic save-backup pipeline fails under Wine ("Failed to
       # save. Failed copy from backup." when a player joins). Keep this False
       # and back up the volume externally instead.

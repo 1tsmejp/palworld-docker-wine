@@ -203,6 +203,10 @@ fi
 # PalServer.exe launcher stub both misbehave under Wine.
 GAME_BIN="$EXE_DIR/PalServer-Win64-Shipping-Cmd.exe"
 START_OPTIONS=(-useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS)
+# Steam query port (map it in compose as QUERY_PORT:QUERY_PORT/udp; use a
+# distinct value per server on the same host — the default clashes with a
+# native-image server's 27015)
+START_OPTIONS+=(-queryport="${QUERY_PORT:-27015}")
 if [ "${COMMUNITY,,}" = "true" ]; then START_OPTIONS+=(-publiclobby); fi
 log "Starting $GAME_BIN under Wine…"
 cd "$SERVER_DIR"

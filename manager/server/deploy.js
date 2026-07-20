@@ -72,8 +72,13 @@ async function startDeploy(server, opts) {
 
   (async () => {
     try {
+      // Stopped / never-launched servers skip the countdown and REST save —
+      // there is nobody to warn and no API to reach; compose up starts them.
+      const wasRunning = (await dockerctl.containerState(server.containerName)).status === 'running';
+      if (!wasRunning && reboot) job.kind = hasUpdates ? 'settings+start' : 'start';
+
       // --- announce countdown -------------------------------------------
-      if (reboot && countdownSeconds > 0) {
+      if (reboot && countdownSeconds > 0 && wasRunning) {
         const st = step(job, `Announce countdown (${fmtCountdown(countdownSeconds)})`);
         try {
           const api = new PalApi(server);
@@ -94,7 +99,7 @@ async function startDeploy(server, opts) {
       }
 
       // --- save world ---------------------------------------------------
-      if (reboot) {
+      if (reboot && wasRunning) {
         const st = step(job, 'Save world');
         try { await new PalApi(server).save(); st.ok(); }
         catch (e) { st.warn(`REST save failed (${e.message}) — image also saves on graceful stop`); }
@@ -108,8 +113,8 @@ async function startDeploy(server, opts) {
       }
 
       if (reboot) {
-        // --- recreate ---------------------------------------------------
-        const st = step(job, 'Recreate container');
+        // --- recreate / start -------------------------------------------
+        const st = step(job, wasRunning ? 'Recreate container' : 'Start container');
         await dockerctl.composeUp(server, !hasUpdates); // env change triggers recreate on its own
         st.ok();
 

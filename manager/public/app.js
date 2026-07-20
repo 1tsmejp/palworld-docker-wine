@@ -595,27 +595,9 @@ function renderDeploy(v, s) {
   const pend = Object.entries(state.pending);
   const sets = state.settings?.settings || [];
   const findSet = (env) => sets.find((x) => x.env === env);
-  v.innerHTML = `
-    <div class="deploy-cols">
-      <div>
-        <div class="card">
-          <h3>Pending changes</h3>
-          ${pend.length ? `<table>
-            <tr><th>Setting</th><th>Current</th><th>New</th></tr>
-            ${pend.map(([env, val]) => {
-              const set = findSet(env) || { effective: '?', iniKey: env };
-              return `<tr>
-                <td><span class="mono">${esc(env)}</span></td>
-                <td class="diff-val"><span class="diff-old">${esc(String(set.effective))}</span></td>
-                <td class="diff-val"><span class="diff-new">${val === null ? 'image default (' + esc(String(set.default)) + ')' : esc(String(val))}</span></td>
-              </tr>`;
-            }).join('')}</table>`
-          : '<p class="muted">No pending setting changes.</p>'}
-        </div>
-        <div class="card">
-          <h3>Mod changes awaiting restart</h3>
-          <div id="dp-mods-pending" class="muted">Loading…</div>
-        </div>
+  const running = s.container.status === 'running';
+  const fresh = s.container.status === 'missing';
+  const optionsCard = running ? `
         <div class="card">
           <h3>Restart options</h3>
           <div class="field">
@@ -645,7 +627,44 @@ function renderDeploy(v, s) {
           <p class="muted" style="margin-top:10px;font-size:.78rem">
             Pipeline: announce countdown → save world → update compose → recreate container → wait for online → validate settings live.
           </p>
+        </div>` : `
+        <div class="card">
+          <h3>${fresh ? 'Launch options' : 'Start options'}</h3>
+          <p class="muted" style="margin-bottom:14px;font-size:.85rem">
+            The server is ${fresh ? 'not launched yet' : 'stopped'} — no countdown or announcements needed.
+            ${pend.length ? 'Your pending settings are written to the compose file first.' : ''}
+          </p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn primary" id="dp-go">${pend.length ? '🚀 Save settings & start server' : fresh ? '🚀 Launch server' : '▶ Start server'}</button>
+            ${pend.length ? '<button class="btn" id="dp-write-only">Save config only (don’t start)</button>' : ''}
+          </div>
+          <p class="muted" style="margin-top:10px;font-size:.78rem">
+            Pipeline: update compose → start container → wait for online → validate settings live.
+            ${fresh ? 'First boot downloads the game server (~6 GB) and can take several minutes.' : ''}
+          </p>
+        </div>`;
+  v.innerHTML = `
+    <div class="deploy-cols">
+      <div>
+        <div class="card">
+          <h3>Pending changes</h3>
+          ${pend.length ? `<table>
+            <tr><th>Setting</th><th>Current</th><th>New</th></tr>
+            ${pend.map(([env, val]) => {
+              const set = findSet(env) || { effective: '?', iniKey: env };
+              return `<tr>
+                <td><span class="mono">${esc(env)}</span></td>
+                <td class="diff-val"><span class="diff-old">${esc(String(set.effective))}</span></td>
+                <td class="diff-val"><span class="diff-new">${val === null ? 'image default (' + esc(String(set.default)) + ')' : esc(String(val))}</span></td>
+              </tr>`;
+            }).join('')}</table>`
+          : '<p class="muted">No pending setting changes.</p>'}
         </div>
+        <div class="card">
+          <h3>Mod changes awaiting restart</h3>
+          <div id="dp-mods-pending" class="muted">Loading…</div>
+        </div>
+        ${optionsCard}
       </div>
       <div>
         <div class="card">
@@ -659,7 +678,8 @@ function renderDeploy(v, s) {
       </div>
     </div>`;
 
-  $('#dp-msg-canned').onchange = (e) => $('#dp-msg').classList.toggle('hidden', e.target.value !== '__custom');
+  const canned = $('#dp-msg-canned');
+  if (canned) canned.onchange = (e) => $('#dp-msg').classList.toggle('hidden', e.target.value !== '__custom');
 
   api(`/servers/${s.id}/mods-pending`).then((changes) => {
     const el = $('#dp-mods-pending');
@@ -677,19 +697,23 @@ function renderDeploy(v, s) {
   }).catch(() => {});
 
   $('#dp-go').onclick = async () => {
-    const countdownSeconds = parseInt($('#dp-countdown').value, 10);
-    const sel = $('#dp-msg-canned').value;
+    const countdownSeconds = running ? parseInt($('#dp-countdown').value, 10) : 0;
+    const sel = running ? $('#dp-msg-canned').value : '';
     const message = sel === '__custom' ? $('#dp-msg').value.trim() : sel;
-    const completeMessage = $('#dp-done-msg').value || null;
+    const completeMessage = running ? ($('#dp-done-msg').value || null) : null;
     const n = pend.length;
     const playerCount = currentServer()?.metrics?.currentplayernum ?? '?';
     const ok = await confirmModal({
-      title: n ? `Apply ${n} change(s) and restart?` : 'Restart server?',
-      body: `<p><b>${playerCount}</b> player(s) currently online. The server will restart after
+      title: running
+        ? (n ? `Apply ${n} change(s) and restart?` : 'Restart server?')
+        : (n ? `Save ${n} change(s) and start the server?` : 'Start the server?'),
+      body: running
+        ? `<p><b>${playerCount}</b> player(s) currently online. The server will restart after
              ${countdownSeconds ? 'a <b>' + countdownSeconds + 's</b> announced countdown' : '<b>no countdown</b>'}.
-             World is saved before restart.</p>`,
-      confirmText: n ? 'Apply & restart' : 'Restart',
-      danger: true,
+             World is saved before restart.</p>`
+        : `<p>${n ? 'Your pending settings are written to the compose file, then the server starts with them.' : 'The server starts with the current compose configuration.'}</p>`,
+      confirmText: running ? (n ? 'Apply & restart' : 'Restart') : (n ? 'Save & start' : 'Start'),
+      danger: running,
     });
     if (!ok) return;
     try {
@@ -707,9 +731,11 @@ function renderDeploy(v, s) {
   const writeOnly = $('#dp-write-only');
   if (writeOnly) writeOnly.onclick = async () => {
     const ok = await confirmModal({
-      title: 'Write settings to compose without restart?',
-      body: '<p>The compose file is updated and backed up, but the running server keeps its current settings until the next restart.</p>',
-      confirmText: 'Write compose',
+      title: running ? 'Write settings to compose without restart?' : 'Save settings without starting?',
+      body: running
+        ? '<p>The compose file is updated and backed up, but the running server keeps its current settings until the next restart.</p>'
+        : '<p>The compose file is updated and backed up. The server stays stopped — it picks the settings up when you start it.</p>',
+      confirmText: running ? 'Write compose' : 'Save config',
     });
     if (!ok) return;
     try {

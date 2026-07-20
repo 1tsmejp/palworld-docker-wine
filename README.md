@@ -1,156 +1,105 @@
 # palworld-docker-wine
 
-Run the **Windows** Palworld dedicated server in Docker on Linux, under [Wine](https://www.winehq.org/).
+**Run a fully moddable Palworld dedicated server on any Linux Docker host.**
 
-## Why?
+This image runs the *Windows* build of the Palworld dedicated server under Wine —
+unlocking the official mod system (UE4SS, PalSchema, Lua, and Steam Workshop
+mods) that is otherwise Windows-only, while keeping the convenience of Linux
+Docker hosting. A full web management UI is included.
 
-Palworld's official mod system (UE4SS, PalSchema, Lua, and the Steam Workshop
-`Mods/` + `PalModSettings.ini` flow — see the
-[official docs](https://docs.palworldgame.com/settings-and-operation/mod)) is
-**Windows-server-only**. The excellent native-Linux images (like
-[thijsvanloef/palworld-server-docker](https://github.com/thijsvanloef/palworld-server-docker))
-can only sideload pak-format mods. This image runs the Windows server build under
-Wine so the full mod system works on a Linux Docker host.
+> ⚠️ **Deploy and test at your own risk.** This is a community project, not an
+> official product. Mods can corrupt saves; Wine adds a compatibility layer to
+> a game server that doesn't officially support it. Take backups, test on a
+> throwaway world first, and expect rough edges.
 
-Wine is a compatibility layer, not an emulator — the server runs the same x86-64
-instructions at near-native speed; Windows API calls are translated to Linux syscalls.
+## What you get
+
+- 🧩 **Full mod support** — the official Palworld mod system runs and executes:
+  UE4SS, PalSchema, Lua and pak mods, installed with one click or one env var
+- 🖥️ **Bundled web manager** (port 8220) — dashboard, settings editor,
+  announcements, deploy pipeline, backups, world migration, and a built-in
+  Steam Workshop mod browser
+- ⚙️ **Same env-variable configuration** as the popular
+  [thijsvanloef/palworld-server-docker](https://github.com/thijsvanloef/palworld-server-docker)
+  image — existing tooling and muscle memory carry over
+- 🚀 **Near-native performance** — Wine translates API calls, it doesn't emulate;
+  the server runs at full speed and boots in ~30 seconds after first install
+- 💾 **Save compatibility** — worlds move freely between this and native Linux
+  servers (players keep their characters)
+
+## Screenshots
+
+| Dashboard | Workshop mod browser |
+|---|---|
+| ![Dashboard](docs/img/overview.png) | ![Mods](docs/img/mods-workshop.png) |
+
+![Deploy pipeline](docs/img/deploy.png)
 
 ## Quick start
 
 ```bash
-git clone <this repo> && cd palworld-docker-wine
+git clone https://github.com/1tsmejp/palworld-docker-wine.git && cd palworld-docker-wine
 # edit docker-compose.yml: set SERVER_PASSWORD, ADMIN_PASSWORD and MANAGER_PASSWORD
 docker compose up -d --build
 docker logs -f palworld-wine     # first boot downloads ~6 GB via steamcmd
 ```
 
-The game listens on `8211/udp`, the REST API on `8212/tcp` (basic auth: `admin` /
-`ADMIN_PASSWORD`). First boot takes a few minutes (Steam download + Wine prefix +
-vcrun2022 install + world generation); subsequent boots are ~30 seconds.
-
-## Bundled web manager
-
-`docker compose up` also starts a **server manager UI** on
-[http://localhost:8220](http://localhost:8220) (basic auth, any username,
-password = `MANAGER_PASSWORD` from the compose file):
-
-- live dashboard (players, FPS, uptime) via the game's REST API
-- full settings editor (all `PalWorldSettings.ini` values, min/max validated)
-  writing to this compose file's environment, with config-drift detection
-- announcements with canned messages; deploy pipeline with countdown
-  announcements, world save, recreate, and post-restart validation
-- backups (list/create/download) and **world save export / import / migrate**
-  (optionally assigning a fresh world GUID and stripping `WorldOption.sav`)
-- Steam Workshop mod browser with Linux/Windows type filtering and installs
-
-Don't want it? `docker compose up -d palworld-wine` starts just the game server.
-
-## How it works
-
-- Native Linux **steamcmd** downloads the *Windows* depot using
-  `@sSteamCmdForcePlatformType windows` (app `2394010`) — no Wine involved in the download.
-- The server runs under Wine with a virtual framebuffer (`xvfb`).
-- `PalWorldSettings.ini` is generated from environment variables on each boot,
-  using the same variable names as thijsvanloef/palworld-server-docker
-  (template derived from that project — credit to its authors), so tooling
-  built for that image works with this one. Set `DISABLE_GENERATE_SETTINGS=true`
-  to manage the INI by hand.
-- The official mod directory is created at
-  `Pal/Binaries/Win64/Mods/` (symlinked at `/palworld/Mods`) with
-  `bGlobalEnableMod=true`. Drop Workshop mods into `Mods/Workshop/<name>/` and
-  list their `Info.json` PackageNames via `ActiveModList=` in `PalModSettings.ini`,
-  then restart.
-
-## Hard-won Wine specifics (the reasons this image looks the way it does)
-
-Several of these were learned the hard way, then confirmed against the working
-setup in [ripps818/docker-palworld-dedicated-server-wine](https://github.com/ripps818/docker-palworld-dedicated-server-wine)
-(credit where due):
-
-1. **Launch `PalServer-Win64-Shipping-Cmd.exe`** — the console build. The
-   `PalServer.exe` launcher stub hangs under Wine without ever starting the
-   server, and the windowed `PalServer-Win64-Shipping.exe` misbehaves
-   (save failures, broken logins).
-2. **`winetricks vcrun2022` is essential.** Wine's built-in C runtime is
-   incomplete; without the real Visual C++ 2022 runtime, Palworld's atomic
-   save pipeline fails (`Failed to save. Failed copy from backup.`, players
-   kicked at character creation, eventual crash).
-3. **WineHQ stable** (with recommends) rather than the distro's minimal wine.
-4. Multithread flags help dedicated servers:
-   `-useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS`.
-5. `winbind` is needed for Steam's NTLM auth (`ntlm_auth`).
-6. The Steam net library logs
-   `Assertion Failed: CalcUnIPThisBox - GetAdaptersAddresses returned 13` at
-   boot — harmless in practice.
-
-## Environment variables
-
-All world-setting variables from
-[thijsvanloef/palworld-server-docker's table](https://github.com/thijsvanloef/palworld-server-docker#environment-variables)
-that map to `PalWorldSettings.ini` are supported (same names, e.g. `EXP_RATE`,
-`DEATH_PENALTY`, `PLAYERS`). Image-infrastructure features of that project
-(auto-update/reboot cron, Discord webhooks, etc.) are **not** implemented here —
-this image is deliberately minimal. Notable extras:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `UPDATE_ON_BOOT` | `false` | steamcmd update/validate on every start |
-| `DISABLE_GENERATE_SETTINGS` | unset | `true` = never touch `PalWorldSettings.ini` |
-| `USE_BACKUP_SAVE_DATA` | `False` | keep `False` under Wine (see above) |
+- Game: `8211/udp` · REST API: `8212/tcp` (never forward this) · Manager UI:
+  [http://localhost:8220](http://localhost:8220) (any username + `MANAGER_PASSWORD`)
+- Game server only, no manager: `docker compose up -d palworld-wine`
+- Manager first, launch later: `docker compose up -d manager`, then configure
+  everything in the UI and press **Launch**
 
 ## Installing mods
 
-Palworld's official mod system runs on this server (that's the point of the
-image). Three ways to install:
+1. **Manager UI**: Mods tab → sign in to Steam (QR scan with the mobile app; the
+   account must own Palworld) → Install → restart from the Deploy tab.
+2. **Declarative**: `WORKSHOP_MODS: "3625557007,3761921027"` in the compose env —
+   missing mods install at boot; the UI keeps this list in sync.
+3. **Manual**: drop a mod with its `Info.json` into `Mods/Workshop/<name>/` and
+   add `ActiveModList=<PackageName>` to `Mods/PalModSettings.ini`.
 
-1. **Manager UI** (easiest): Mods tab → sign in to Steam (QR with the mobile
-   app; the account must own Palworld — Steam does not allow anonymous
-   Workshop downloads) → Install on any Workshop mod. The manager places it
-   in `Mods/Workshop/`, enables it in `PalModSettings.ini`, and stages it as
-   a pending change until you restart from the Deploy tab.
-2. **`WORKSHOP_MODS` env**: comma-separated Workshop IDs in the compose file
-   (e.g. `WORKSHOP_MODS: "3625557007,3761921027"`). Missing mods are
-   downloaded and installed at boot using the stored Steam token. The manager
-   keeps this list in sync with UI installs/removals automatically.
-3. **Manual**: drop a mod folder (with its `Info.json`) into
-   `Mods/Workshop/<name>/` and add `ActiveModList=<PackageName>` to
-   `Mods/PalModSettings.ini`.
+**Important:** UE4SS-, Lua- and PalSchema-type mods need their loader runtimes
+installed on the server (clients get them automatically, servers don't):
+`UE4SS Experimental (Palworld)` = Workshop ID `3625223587`, `PalSchema` = `3625280368`.
+The manager warns when a mod's declared dependencies are missing. Verify
+execution in `Pal/Binaries/Win64/Mods/NativeMods/UE4SS/UE4SS.log`.
 
-**⚠ Loader runtimes are Workshop items too.** UE4SS-, Lua- and PalSchema-type
-mods need their runtimes installed on the server like any other mod — clients
-get them via Workshop subscriptions, servers do not:
+## Configuration
 
-- `UE4SS Experimental (Palworld)` — Workshop ID `3625223587`
-- `PalSchema` — Workshop ID `3625280368`
+All world settings use the
+[same environment variables](https://github.com/thijsvanloef/palworld-server-docker#environment-variables)
+as thijsvanloef's image (`EXP_RATE`, `DEATH_PENALTY`, `PLAYERS`, …), generated
+into `PalWorldSettings.ini` at boot. Set `DISABLE_GENERATE_SETTINGS=true` to
+manage the INI by hand. Extras: `UPDATE_ON_BOOT` (steamcmd update each start),
+`WORKSHOP_MODS` (see above). `USE_BACKUP_SAVE_DATA` must stay `False` under
+Wine — back up the `/palworld` volume externally (the manager does this too).
 
-A mod's `Info.json` lists its `Dependencies` by PackageName; the manager warns
-when a dependency is missing. Verify execution after restart in
-`Pal/Binaries/Win64/Mods/NativeMods/UE4SS/UE4SS.log` — you should see PalSchema
-loaders initializing and each mod loading. The official system deploys
-pak-type mods to `Pal/Content/Paks/~WorkshopMods/<PackageName>/`; if a pak
-doesn't appear there after a restart, copy it from the mod's `Paks/` folder
-manually.
+<details>
+<summary><b>Technical notes</b> — the Wine specifics baked into this image</summary>
 
-## Save compatibility
+Confirmed working combination (aligned with
+[ripps818/docker-palworld-dedicated-server-wine](https://github.com/ripps818/docker-palworld-dedicated-server-wine)):
 
-Windows and Linux server builds share the same save format. Worlds
-(`Pal/Saved/SaveGames/0/<GUID>/`) can be copied in either direction; point
-`DedicatedServerName` in `GameUserSettings.ini` at the GUID and restart.
-
-## Status
-
-⚠️ **Experimental.** The server boots, accepts players, and initializes the
-official mod system (it writes its own `PalModSettings.ini` `ConfigVersion`
-header on first run). Long-run stability under Wine and behaviour of individual
-mods are yours to discover — this is a test-bench image, not a hardened
-production one. Issues and PRs welcome.
+1. Launch the console build `PalServer-Win64-Shipping-Cmd.exe` — the
+   `PalServer.exe` launcher stub hangs under Wine, and the windowed shipping
+   exe breaks saves and logins.
+2. `winetricks vcrun2022` (real MSVC runtime) — without it the save pipeline
+   fails (`Failed to save. Failed copy from backup.`) and players are kicked
+   at character creation.
+3. WineHQ stable + persistent Xvfb + `-useperfthreads -NoAsyncLoadingThread
+   -UseMultithreadForDS`; `winbind` for Steam NTLM auth.
+4. steamcmd is native Linux — only the game runs under Wine
+   (`@sSteamCmdForcePlatformType windows`, app 2394010).
+5. Official mod deploy targets: pak → `Content/Paks/~WorkshopMods/<pkg>/`,
+   PalSchema → `Mods/NativeMods/UE4SS/Mods/PalSchema/mods/`, Lua/UE4SS →
+   `Mods/NativeMods/UE4SS/Mods/`.
+</details>
 
 ## Credits
 
-- [thijsvanloef/palworld-server-docker](https://github.com/thijsvanloef/palworld-server-docker)
-  for the environment-variable convention and settings template this image reuses.
-- [ripps818/docker-palworld-dedicated-server-wine](https://github.com/ripps818/docker-palworld-dedicated-server-wine)
-  for proving the working Wine recipe (vcrun2022, console binary, WineHQ stable)
-  that this image's Wine specifics are aligned with — if you want a
-  fuller-featured Wine image (webhooks, cron, backups), use theirs.
-- The Wine, winetricks and steamcmd projects.
+- [thijsvanloef/palworld-server-docker](https://github.com/thijsvanloef/palworld-server-docker) — env convention and settings template
+- [ripps818/docker-palworld-dedicated-server-wine](https://github.com/ripps818/docker-palworld-dedicated-server-wine) — proven Wine recipe this image aligns with
+- Wine, winetricks, steamcmd, [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS), [PalSchema](https://github.com/Okaetsu/PalSchema)
+
+MIT licensed. Not affiliated with Pocketpair.

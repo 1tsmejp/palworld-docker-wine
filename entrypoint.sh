@@ -227,6 +227,7 @@ trap cleanup SIGTERM SIGINT
 #    time and CPU stop). Any UDP packet on the game port resumes it — a
 #    connecting client retries, so the first knock wakes the server.
 monitor_loop() {
+  set +e  # the monitor must never die from a transient command failure
   local interval=10 idle=0 saved=0 fails=0
   local rest="http://127.0.0.1:${REST_API_PORT:-8212}/v1/api"
   local timeout="${AUTO_PAUSE_TIMEOUT_EST:-180}"
@@ -260,7 +261,15 @@ monitor_loop() {
         curl -sf -m 60 -u "admin:${REST_ADMIN_PASSWORD}" -X POST "$rest/save" >/dev/null 2>&1 || true
         [ "${AUTO_PAUSE_LOG,,}" != "false" ] && log "auto-pause: empty for ${idle}s — pausing game process"
         pkill -STOP -f 'PalServer-Win64-Shipping-Cmd.exe' || true
-        tcpdump -i any -c 1 -q "udp and dst port 8211" >/dev/null 2>&1
+        # While frozen, the game can't drain its UDP socket — an incoming
+        # connection attempt shows up as a non-empty rx queue in /proc/net/udp.
+        # Needs no capture capabilities (tcpdump is blocked on some hosts).
+        local hexport; hexport=$(printf '%04X' 8211)
+        while sleep 2; do
+          if awk -v p=":$hexport" 'index($2, p) { split($5, q, ":"); if (q[2] != "00000000") found = 1 } END { exit found ? 0 : 1 }' /proc/net/udp /proc/net/udp6 2>/dev/null; then
+            break
+          fi
+        done
         pkill -CONT -f 'PalServer-Win64-Shipping-Cmd.exe' || true
         [ "${AUTO_PAUSE_LOG,,}" != "false" ] && log "auto-pause: traffic on game port — resumed"
         idle=0 saved=0

@@ -199,6 +199,35 @@ async function listInstalled(server) {
         });
       }
     } catch { /* dir absent */ }
+
+    // Mods the game has ADOPTED: at boot it consumes Workshop/<id> into
+    // ManagedMods/<PackageName> (unless WORKSHOP_MODS re-downloads the item).
+    // Keep them visible and configurable under their package name.
+    try {
+      const workshopPkgs = new Set();
+      for (const r of result) {
+        if (r.kind !== 'official') continue;
+        try {
+          const info = JSON.parse(await dockerctl.exec(server.containerName,
+            ['cat', `${OFFICIAL_MODS_DIR}/Workshop/${r.dir}/Info.json`]));
+          if (info.PackageName) workshopPkgs.add(info.PackageName);
+        } catch { /* ignore */ }
+      }
+      const out = await dockerctl.exec(server.containerName,
+        ['sh', '-c', `ls -d ${OFFICIAL_MODS_DIR}/ManagedMods/*/ 2>/dev/null | xargs -rn1 basename`]);
+      for (const pkg of out.trim() ? out.trim().split('\n') : []) {
+        if (workshopPkgs.has(pkg)) continue;
+        let serverSupported = null;
+        let meta = null;
+        try {
+          const info = JSON.parse(await dockerctl.exec(server.containerName,
+            ['cat', `${OFFICIAL_MODS_DIR}/ManagedMods/${pkg}/Info.json`]));
+          if (Array.isArray(info.InstallRule)) serverSupported = info.InstallRule.some((r) => r && r.IsServer === true);
+          meta = Object.entries(reg).find(([k, v]) => k.startsWith(`${server.id}:official:`) && v.packageName === pkg)?.[1] || { title: info.ModName || pkg };
+        } catch { /* no Info.json */ }
+        result.push({ dir: pkg, kind: 'official', managed: true, files: ['(managed by game)'], serverSupported, meta });
+      }
+    } catch { /* dir absent */ }
   }
   return result;
 }
@@ -502,11 +531,23 @@ async function removeMod(server, dir, kind = 'pak') {
   if (kind === 'official') {
     await dockerctl.exec(server.containerName, ['sh', '-c', `rm -rf ${q(`${OFFICIAL_MODS_DIR}/Workshop/${safe}`)}`]);
     const meta = reg[`${server.id}:official:${safe}`];
-    if (meta && meta.packageName) {
-      await dockerctl.exec(server.containerName,
-        ['sh', '-c', `sed -i "/^ActiveModList=${meta.packageName}$/d" ${q(`${OFFICIAL_MODS_DIR}/PalModSettings.ini`)} 2>/dev/null || true`]);
+    // For game-adopted mods `safe` IS the package name; for workshop ids the
+    // package name comes from the registry. Clean the adopted + deployed
+    // copies too — the game does not garbage-collect them.
+    const pkg = (meta && meta.packageName) || (/^\d+$/.test(safe) ? null : safe);
+    if (pkg && /^[\w.-]+$/.test(pkg)) {
+      await dockerctl.exec(server.containerName, ['sh', '-c', `
+        rm -rf ${q(`${OFFICIAL_MODS_DIR}/ManagedMods/${pkg}`)} \
+               ${q(`${OFFICIAL_MODS_DIR}/NativeMods/UE4SS/Mods/${pkg}`)} \
+               ${q(`${OFFICIAL_MODS_DIR}/NativeMods/UE4SS/Mods/PalSchema/mods/${pkg}`)}
+        sed -i "/^ActiveModList=${pkg}$/d" ${q(`${OFFICIAL_MODS_DIR}/PalModSettings.ini`)} 2>/dev/null || true`]);
     }
     delete reg[`${server.id}:official:${safe}`];
+    if (pkg) {
+      for (const [k, v] of Object.entries(reg)) {
+        if (k.startsWith(`${server.id}:official:`) && v.packageName === pkg) delete reg[k];
+      }
+    }
   } else {
     await dockerctl.exec(server.containerName, ['sh', '-c', `rm -rf '${MODS_DIR}/${safe.replace(/'/g, '')}'`]);
     delete reg[`${server.id}:${safe}`];
@@ -618,30 +659,64 @@ function modBaseDir(dir, kind) {
   return kind === 'official' ? `${OFFICIAL_MODS_DIR}/Workshop/${dir}` : `${MODS_DIR}/${dir}`;
 }
 
+// Scan roots: the workshop source folder, plus (for official mods) the
+// DEPLOYED folder under NativeMods — loader mods like PalSchema keep their
+// runtime config there only (the workshop item is just a dll). Deployed
+// entries are keyed with a "deployed:" prefix; the schema-content (mods/)
+// and Generated/ subtrees are excluded to avoid duplicating content mods.
+async function modConfigRoots(server, dir, kind) {
+  const roots = [{ prefix: '', base: modBaseDir(dir, kind) }];
+  if (kind === 'official') {
+    // PackageName from the workshop source, or from ManagedMods when the game
+    // has consumed the workshop folder (it does this at boot for items not
+    // re-downloaded via WORKSHOP_MODS; `dir` is then the package name itself).
+    let pkg = null;
+    for (const infoPath of [`${modBaseDir(dir, kind)}/Info.json`, `${OFFICIAL_MODS_DIR}/ManagedMods/${dir}/Info.json`]) {
+      try {
+        const info = JSON.parse(await dockerctl.exec(server.containerName, ['cat', infoPath]));
+        if (info.PackageName) { pkg = info.PackageName; break; }
+      } catch { /* try next */ }
+    }
+    if (pkg && /^[\w.-]+$/.test(pkg)) {
+      roots.push({ prefix: 'deployed:', base: `${OFFICIAL_MODS_DIR}/NativeMods/UE4SS/Mods/${pkg}` });
+      roots.push({ prefix: 'deployed:', base: `${OFFICIAL_MODS_DIR}/NativeMods/UE4SS/Mods/PalSchema/mods/${pkg}` });
+    }
+  }
+  return roots;
+}
+
 async function listModConfigs(server, dir, kind) {
-  const base = modBaseDir(dir, kind);
-  let out = '';
-  try {
-    out = await dockerctl.exec(server.containerName,
-      ['sh', '-c', `find ${q(base)} -type f -size -262144c 2>/dev/null | sort`]);
-  } catch { /* mod dir missing */ }
-  const files = out.trim().split('\n').filter(Boolean)
-    .map((f) => f.slice(base.length + 1))
-    .filter((rel) => rel && !rel.split('/').some((p) => p.startsWith('.')))
-    .filter((rel) => CONFIG_BASENAME_RE.test(rel.split('/').pop()));
-  return { base, files };
+  const roots = await modConfigRoots(server, dir, kind);
+  const files = [];
+  const paths = {}; // listing key -> absolute path in container
+  for (const root of roots) {
+    let out = '';
+    try {
+      out = await dockerctl.exec(server.containerName,
+        ['sh', '-c', `find ${q(root.base)} -type f -size -262144c 2>/dev/null | sort`]);
+    } catch { /* dir missing */ }
+    for (const f of out.trim().split('\n').filter(Boolean)) {
+      const rel = f.slice(root.base.length + 1);
+      if (!rel || rel.split('/').some((p) => p.startsWith('.'))) continue;
+      if (root.prefix && /^(mods|Generated)\//.test(rel)) continue;
+      if (!CONFIG_BASENAME_RE.test(rel.split('/').pop())) continue;
+      const key = root.prefix + rel;
+      if (!(key in paths)) { files.push(key); paths[key] = `${root.base}/${rel}`; }
+    }
+  }
+  return { files, paths };
 }
 
 async function readModConfig(server, dir, kind, rel) {
-  const { base, files } = await listModConfigs(server, dir, kind);
+  const { files, paths } = await listModConfigs(server, dir, kind);
   if (!files.includes(rel)) throw Object.assign(new Error('not an editable config file of this mod'), { status: 404 });
-  return dockerctl.exec(server.containerName, ['cat', `${base}/${rel}`]);
+  return dockerctl.exec(server.containerName, ['cat', paths[rel]]);
 }
 
 async function writeModConfig(server, dir, kind, rel, content) {
-  const { base, files } = await listModConfigs(server, dir, kind);
+  const { files, paths } = await listModConfigs(server, dir, kind);
   if (!files.includes(rel)) throw Object.assign(new Error('not an editable config file of this mod'), { status: 404 });
-  const full = `${base}/${rel}`;
+  const full = paths[rel];
   await dockerctl.exec(server.containerName, ['sh', '-c', `cp ${q(full)} ${q(full + '.mgr-bak')}`]);
   await dockerctl.execWriteFile(server.containerName, full, Buffer.from(String(content), 'utf8'));
 
@@ -651,7 +726,7 @@ async function writeModConfig(server, dir, kind, rel, content) {
   let deployedSync = false;
   if (kind === 'official' && /^PalSchema\//i.test(rel)) {
     try {
-      const info = JSON.parse(await dockerctl.exec(server.containerName, ['cat', `${base}/Info.json`]));
+      const info = JSON.parse(await dockerctl.exec(server.containerName, ['cat', `${modBaseDir(dir, kind)}/Info.json`]));
       if (info.PackageName) {
         const deployed = `${OFFICIAL_MODS_DIR}/NativeMods/UE4SS/Mods/PalSchema/mods/${info.PackageName}/${rel.replace(/^PalSchema\//i, '')}`;
         const exists = await dockerctl.exec(server.containerName, ['sh', '-c', `[ -f ${q(deployed)} ] && echo yes || echo no`]);

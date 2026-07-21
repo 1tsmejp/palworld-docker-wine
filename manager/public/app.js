@@ -1235,7 +1235,7 @@ function modConfigEditor(s, dir, kind, title) {
       <div class="modal-back"><div class="modal" style="width:min(720px,94vw)">
         <h3>⚙ ${esc(title)} — settings</h3>
         <div class="field"><label>Config file</label>
-          <select id="cfg-file">${files.map((f) => `<option>${esc(f)}</option>`).join('')}</select></div>
+          <select id="cfg-file">${files.map((f) => `<option value="${esc(f)}">${esc(f.startsWith('deployed:') ? '(deployed) ' + f.slice(9) : f)}</option>`).join('')}</select></div>
         <div id="cfg-editor"></div>
         <p class="muted" style="font-size:.72rem;margin-top:8px">A one-shot backup (<span class="mono">.mgr-bak</span>) is kept next to the file. Changes load on the next server restart.</p>
         <div class="actions">

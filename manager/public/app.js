@@ -1220,8 +1220,8 @@ function modConfigEditor(s, dir, kind, title) {
     const btn = $('#cfg-save');
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      await api(`${apiBase}/config-file?kind=${kind}`, { method: 'PUT', body: { path: currentFile, content } });
-      toast('Saved — restart the server to apply (Deploy tab)', 'ok');
+      const r = await api(`${apiBase}/config-file?kind=${kind}`, { method: 'PUT', body: { path: currentFile, content } });
+      toast(r.deployedSync ? 'Saved to workshop source + deployed copy — restart the server to apply' : 'Saved — restart the server to apply (Deploy tab)', 'ok');
       btn.disabled = false; btn.textContent = 'Save';
     } catch (e) { btn.disabled = false; btn.textContent = 'Save'; toast('Save failed: ' + e.message, 'err'); }
   }

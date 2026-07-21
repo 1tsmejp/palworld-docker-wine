@@ -609,7 +609,9 @@ async function installFromNexus(server, modId) {
 // like a config (QualityOfLifeConfig.json, Scripts/*/settings.lua,
 // PalSchema/config/config.json, UE4SS-settings.ini, …). Read/write goes
 // through listModConfigs so only enumerated files are ever touched.
-const CONFIG_BASENAME_RE = /(config|settings|options)[^/]*\.(json|ini|lua|txt|cfg|yaml|yml)$/i;
+// .jsonc always qualifies: PalSchema data files (the de-facto config of
+// schema mods like KeyItems) ship as commented JSON.
+const CONFIG_BASENAME_RE = /(config|settings|options)[^/]*\.(json|ini|lua|txt|cfg|yaml|yml)$|\.jsonc$/i;
 
 function modBaseDir(dir, kind) {
   if (!/^[\w.-]+$/.test(dir)) throw Object.assign(new Error('bad mod dir'), { status: 400 });
@@ -642,7 +644,25 @@ async function writeModConfig(server, dir, kind, rel, content) {
   const full = `${base}/${rel}`;
   await dockerctl.exec(server.containerName, ['sh', '-c', `cp ${q(full)} ${q(full + '.mgr-bak')}`]);
   await dockerctl.execWriteFile(server.containerName, full, Buffer.from(String(content), 'utf8'));
-  return { ok: true, backup: `${rel}.mgr-bak`, restartRequired: true };
+
+  // Official PalSchema mods are deployed to NativeMods at boot; the deployer
+  // may skip unchanged workshop items, so mirror the edit into the deployed
+  // copy too — that's the file PalSchema actually loads on restart.
+  let deployedSync = false;
+  if (kind === 'official' && /^PalSchema\//i.test(rel)) {
+    try {
+      const info = JSON.parse(await dockerctl.exec(server.containerName, ['cat', `${base}/Info.json`]));
+      if (info.PackageName) {
+        const deployed = `${OFFICIAL_MODS_DIR}/NativeMods/UE4SS/Mods/PalSchema/mods/${info.PackageName}/${rel.replace(/^PalSchema\//i, '')}`;
+        const exists = await dockerctl.exec(server.containerName, ['sh', '-c', `[ -f ${q(deployed)} ] && echo yes || echo no`]);
+        if (exists.trim() === 'yes') {
+          await dockerctl.execWriteFile(server.containerName, deployed, Buffer.from(String(content), 'utf8'));
+          deployedSync = true;
+        }
+      }
+    } catch { /* best effort */ }
+  }
+  return { ok: true, backup: `${rel}.mgr-bak`, deployedSync, restartRequired: true };
 }
 
 module.exports = {

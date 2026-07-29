@@ -185,8 +185,9 @@ const IMAGE_SETTINGS = [
   { env: 'AUTO_REBOOT_WARN_MINUTES', type: 'integer', default: 5, min: 0, max: 120, step: 1, cat: 'Image: Auto Reboot', desc: 'Minutes of in-game warning before a scheduled reboot.' },
   { env: 'AUTO_REBOOT_EVEN_IF_PLAYERS_ONLINE', type: 'boolean', default: false, cat: 'Image: Auto Reboot', desc: 'Reboot on schedule even when players are online.' },
   // Auto update
-  { env: 'AUTO_UPDATE_ENABLED', type: 'boolean', default: false, cat: 'Image: Auto Update', desc: 'Automatically update the game server on a cron schedule.', requires: { RCON_ENABLED: true, UPDATE_ON_BOOT: true } },
-  { env: 'AUTO_UPDATE_CRON_EXPRESSION', type: 'string', default: '0 * * * *', ...CRON, cat: 'Image: Auto Update', desc: 'Cron schedule for update checks.' },
+  { env: 'AUTO_UPDATE_ENABLED', type: 'boolean', default: false, cat: 'Image: Auto Update', desc: 'Automatically check Steam for game updates and restart the server to apply them.', requires: { REST_API_ENABLED: true, UPDATE_ON_BOOT: true } },
+  { env: 'AUTO_UPDATE_CRON_EXPRESSION', type: 'string', default: '0 * * * *', ...CRON, cat: 'Image: Auto Update', desc: 'Cron schedule for update checks (linux image only).' },
+  { env: 'AUTO_UPDATE_CHECK_INTERVAL_MINUTES', type: 'integer', default: 60, min: 5, max: 1440, step: 5, cat: 'Image: Auto Update', desc: 'Minutes between update checks (Wine image only; the linux image uses the cron expression).' },
   { env: 'AUTO_UPDATE_WARN_MINUTES', type: 'integer', default: 30, min: 0, max: 120, step: 1, cat: 'Image: Auto Update', desc: 'Minutes of warning before an update restart (ignored when empty server).' },
   { env: 'UPDATE_ON_BOOT', type: 'boolean', default: true, cat: 'Image: Auto Update', desc: 'Update/validate the server files on container start.' },
   { env: 'TARGET_MANIFEST_ID', type: 'string', default: '', cat: 'Image: Auto Update', desc: 'Pin the server to a specific Steam depot manifest (version lock).' },

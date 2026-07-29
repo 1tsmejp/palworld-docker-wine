@@ -76,6 +76,10 @@ All world settings use the
 as thijsvanloef's image (`EXP_RATE`, `DEATH_PENALTY`, `PLAYERS`, …), generated
 into `PalWorldSettings.ini` at boot. Set `DISABLE_GENERATE_SETTINGS=true` to
 manage the INI by hand. Extras: `UPDATE_ON_BOOT` (steamcmd update each start),
+`AUTO_UPDATE_ENABLED` (poll Steam every `AUTO_UPDATE_CHECK_INTERVAL_MINUTES`,
+default 60, for a new build; warn players in-game for
+`AUTO_UPDATE_WARN_MINUTES`, default 30, save, and restart the container to
+apply it — needs `UPDATE_ON_BOOT=true`, the REST API, and a `restart:` policy),
 `WORKSHOP_MODS` (see above). `USE_BACKUP_SAVE_DATA` must stay `False` under
 Wine — back up the `/palworld` volume externally (the manager does this too).
 

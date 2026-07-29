@@ -210,6 +210,7 @@ cleanup() {
   log "SIGTERM — stopping wine…"
   discord_send PRE_SHUTDOWN 'Server is shutting down...'
   [ -n "${MONITOR_PID:-}" ] && kill "$MONITOR_PID" 2>/dev/null
+  [ -n "${UPDATER_PID:-}" ] && kill "$UPDATER_PID" 2>/dev/null
   # a paused (SIGSTOPped) game can't handle shutdown — resume it first
   pkill -CONT -f 'PalServer-Win64-Shipping-Cmd.exe' 2>/dev/null || true
   wineserver -k || true
@@ -278,6 +279,59 @@ monitor_loop() {
   done
 }
 
+# ---------------------------------------------------------------- auto update
+# AUTO_UPDATE_ENABLED: periodically compare the installed buildid
+# (steamapps/appmanifest_2394010.acf) against Steam's public branch — the
+# same api.steamcmd.net check the thijsvanloef linux image uses. When a new
+# build appears: warn players in-game for AUTO_UPDATE_WARN_MINUTES (skipped
+# when the server is empty), save, then ask the game to shut down — the
+# container's restart policy relaunches it and the UPDATE_ON_BOOT steamcmd
+# pass installs the new build. Interval is AUTO_UPDATE_CHECK_INTERVAL_MINUTES
+# (the linux image's AUTO_UPDATE_CRON_EXPRESSION doesn't apply here).
+update_check_loop() {
+  set +e  # like the monitor, never die from a transient failure
+  local interval_min="${AUTO_UPDATE_CHECK_INTERVAL_MINUTES:-60}"
+  local warn_min="${AUTO_UPDATE_WARN_MINUTES:-30}"
+  local rest="http://127.0.0.1:${REST_API_PORT:-8212}/v1/api"
+  local acf="$SERVER_DIR/steamapps/appmanifest_2394010.acf"
+  local current latest count left
+  while sleep $((interval_min * 60)); do
+    latest=$(curl -sfL -m 30 https://api.steamcmd.net/v1/info/2394010 2>/dev/null \
+      | jq -r '.data."2394010".depots.branches.public.buildid // empty' 2>/dev/null)
+    if [ -z "$latest" ]; then
+      log "auto-update: could not fetch latest buildid (Steam api unreachable?) — retrying in ${interval_min}m"
+      continue
+    fi
+    current=$(awk -F'"' '/"buildid"/{print $4; exit}' "$acf" 2>/dev/null)
+    [ -z "$current" ] && continue
+    [ "$current" = "$latest" ] && continue
+    log "auto-update: new build available ($current -> $latest)"
+    discord_send UPDATE "A Palworld update is available — the server will restart to update."
+    # a paused (SIGSTOPped) empty server can't answer REST calls — resume it
+    pkill -CONT -f 'PalServer-Win64-Shipping-Cmd.exe' 2>/dev/null || true
+    count=$(curl -sf -m 10 -u "admin:${REST_ADMIN_PASSWORD}" "$rest/players" 2>/dev/null | jq '.players | length' 2>/dev/null)
+    if [ -n "$count" ] && [ "$count" -gt 0 ] && [ "$warn_min" -gt 0 ]; then
+      log "auto-update: $count player(s) online — warning for ${warn_min}m before restart"
+      left=$warn_min
+      while [ "$left" -gt 0 ]; do
+        curl -sf -m 10 -u "admin:${REST_ADMIN_PASSWORD}" -X POST -H 'Content-Type: application/json' \
+          -d "$(jq -nc --arg m "Server update in $left minute(s) — the server will restart briefly." '{message: $m}')" \
+          "$rest/announce" >/dev/null 2>&1 || true
+        sleep 60
+        left=$((left - 1))
+      done
+      # players may have emptied out and auto-pause frozen the game mid-countdown
+      pkill -CONT -f 'PalServer-Win64-Shipping-Cmd.exe' 2>/dev/null || true
+    fi
+    curl -sf -m 60 -u "admin:${REST_ADMIN_PASSWORD}" -X POST "$rest/save" >/dev/null 2>&1 || true
+    log "auto-update: shutting down to apply update (restart policy relaunches the container)"
+    curl -sf -m 15 -u "admin:${REST_ADMIN_PASSWORD}" -X POST -H 'Content-Type: application/json' \
+      -d '{"waittime":10,"message":"Updating — back in a few minutes"}' "$rest/shutdown" >/dev/null 2>&1 \
+      || wineserver -k || true
+    return 0
+  done
+}
+
 WINE_BIN=$(command -v wine64 || command -v wine)
 
 # Persistent virtual display (matches ripps818's proven setup)
@@ -317,6 +371,15 @@ if [ "${AUTO_PAUSE_ENABLED,,}" = "true" ] || [ -n "${DISCORD_WEBHOOK_URL:-}" ]; 
     log "monitor started (auto-pause: ${AUTO_PAUSE_ENABLED:-false}, discord: $([ -n "${DISCORD_WEBHOOK_URL:-}" ] && echo on || echo off))"
   else
     log "monitor NOT started — auto-pause/discord need REST_API_ENABLED=True and ADMIN_PASSWORD"
+  fi
+fi
+if [ "${AUTO_UPDATE_ENABLED,,}" = "true" ]; then
+  if [ "${UPDATE_ON_BOOT,,}" = "true" ] && [ "${REST_API_ENABLED,,}" = "true" ] && [ -n "$REST_ADMIN_PASSWORD" ]; then
+    update_check_loop &
+    UPDATER_PID=$!
+    log "auto-update: checking every ${AUTO_UPDATE_CHECK_INTERVAL_MINUTES:-60}m (warn: ${AUTO_UPDATE_WARN_MINUTES:-30}m)"
+  else
+    log "auto-update NOT started — needs UPDATE_ON_BOOT=true, REST_API_ENABLED=True and ADMIN_PASSWORD"
   fi
 fi
 wait $SERVER_PID

@@ -21,6 +21,9 @@ services:
       REST_API_ENABLED: "True"
       REST_API_PORT: 8212
       UPDATE_ON_BOOT: "false"               # true = check for game updates each start
+      AUTO_UPDATE_ENABLED: "false"          # true = poll Steam for new builds and restart to update
+      # AUTO_UPDATE_CHECK_INTERVAL_MINUTES: 60  # minutes between update checks
+      # AUTO_UPDATE_WARN_MINUTES: 30            # in-game warning before the update restart
       QUERY_PORT: 27015                     # steam query port; use a distinct one per server on a host
       # Palworld's atomic save-backup pipeline fails under Wine ("Failed to
       # save. Failed copy from backup." when a player joins). Keep this False

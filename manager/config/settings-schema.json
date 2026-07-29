@@ -1318,10 +1318,10 @@
       "default": 27015,
       "category": "Network & Access",
       "description": "Steam query port (-queryport launch flag). The compose port mapping is rewritten to match on deploy; use a distinct one per server on a host.",
+      "scope": "image",
       "min": 1024,
       "max": 65535,
-      "step": 1,
-      "scope": "image"
+      "step": 1
     },
     {
       "env": "AUTO_PAUSE_ENABLED",
@@ -1416,10 +1416,10 @@
       "type": "boolean",
       "default": false,
       "category": "Image: Auto Update",
-      "description": "Automatically update the game server on a cron schedule.",
+      "description": "Automatically check Steam for game updates and restart the server to apply them.",
       "scope": "image",
       "requires": {
-        "RCON_ENABLED": true,
+        "REST_API_ENABLED": true,
         "UPDATE_ON_BOOT": true
       }
     },
@@ -1429,10 +1429,22 @@
       "type": "string",
       "default": "0 * * * *",
       "category": "Image: Auto Update",
-      "description": "Cron schedule for update checks.",
+      "description": "Cron schedule for update checks (linux image only).",
       "scope": "image",
       "pattern": "^\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+$",
       "patternHint": "must be a 5-field cron expression, e.g. 0 4 * * *"
+    },
+    {
+      "env": "AUTO_UPDATE_CHECK_INTERVAL_MINUTES",
+      "iniKey": null,
+      "type": "integer",
+      "default": 60,
+      "category": "Image: Auto Update",
+      "description": "Minutes between update checks (Wine image only; the linux image uses the cron expression).",
+      "scope": "image",
+      "min": 5,
+      "max": 1440,
+      "step": 5
     },
     {
       "env": "AUTO_UPDATE_WARN_MINUTES",

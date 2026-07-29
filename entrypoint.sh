@@ -42,13 +42,27 @@ EXE_DIR="$SERVER_DIR/Pal/Binaries/Win64"
 if [ ! -f "$SERVER_DIR/PalServer.exe" ] || [ "${UPDATE_ON_BOOT,,}" = "true" ]; then
   log "Installing/updating Palworld WINDOWS dedicated server (app 2394010)…"
   discord_send PRE_UPDATE_BOOT 'Server is updating...'
-  $STEAMCMD +@sSteamCmdForcePlatformType windows \
+  # Anonymous Steam logins only get manifest request codes for the CURRENT
+  # build — patching an old install needs the previously-installed manifest
+  # too and dies with "Access Denied" (state 0x6). Removing the appmanifest
+  # makes steamcmd do a fresh-install pass instead (the linux image's
+  # update flow does the same); validate re-uses the files already on disk
+  # and steamcmd rewrites the manifest afterwards.
+  rm -f "$SERVER_DIR/steamapps/appmanifest_2394010.acf"
+  if $STEAMCMD +@sSteamCmdForcePlatformType windows \
     +force_install_dir "$SERVER_DIR" \
     +login anonymous \
     +app_update 2394010 validate \
-    +quit
-  log "Install/update done."
-  discord_send POST_UPDATE_BOOT 'Server update complete!'
+    +quit; then
+    log "Install/update done."
+    discord_send POST_UPDATE_BOOT 'Server update complete!'
+  elif [ -f "$SERVER_DIR/PalServer.exe" ]; then
+    # never crash-loop the game server over a failed update check
+    log "steamcmd failed — starting with the existing install anyway"
+  else
+    log "steamcmd failed and there is no existing install — cannot start"
+    exit 1
+  fi
 fi
 
 # ---------------------------------------------------------------- settings (env -> ini)

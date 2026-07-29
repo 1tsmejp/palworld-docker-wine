@@ -94,7 +94,7 @@ function renderSidebar() {
         <span class="dot ${on ? 'on' : s.container.status === 'running' ? '' : 'off'}"></span>
         <div>
           <div>${esc(s.name)}</div>
-          <div class="meta">${on ? `${s.metrics?.currentplayernum ?? '?'}/${s.metrics?.maxplayernum ?? '?'} players` : s.container.status === 'missing' ? 'not launched' : esc(s.container.status)}</div>
+          <div class="meta">${on ? `${s.metrics?.currentplayernum ?? '?'}/${s.metrics?.maxplayernum ?? '?'} players` : s.container.status === 'missing' ? 'not launched' : esc(s.container.status)}${s.update && s.update.available ? ' · <span class="warn-text">⬆ update</span>' : ''}</div>
         </div>
       </div>`;
   }).join('');
@@ -191,6 +191,7 @@ function renderTopbar() {
     <span class="badge ${on ? 'ok' : 'err'}">${on ? '● running' : '○ ' + esc(s.container.status)}</span>
     ${s.paused ? '<span class="badge warn">⏸ paused (auto-pause)</span>' : `<span class="badge ${api_ ? 'ok' : 'err'}">REST ${api_ ? 'connected' : 'unreachable'}</span>`}
     ${api_ ? `<span class="badge">version <b>${esc(api_.version)}</b></span>` : ''}
+    ${s.update && s.update.available ? `<span class="badge warn" title="installed build ${esc(s.update.current)} — Steam has build ${esc(s.update.latest)}. Auto-update will apply it, or restart the server to update now.">⬆ update pending</span>` : ''}
     ${s.metrics ? `<span class="badge">FPS <b>${s.metrics.serverfps}</b></span>
     <span class="badge">uptime <b>${fmtUptime(s.metrics.uptime)}</b></span>
     <span class="badge">day <b>${s.metrics.days}</b></span>` : ''}`;

@@ -8,6 +8,7 @@ const { startDeploy, getJob, listJobs } = require('./deploy');
 const mods = require('./mods');
 const { readEnv } = require('./compose');
 const { setSecrets, secretsStatus } = require('./secrets');
+const { updateStatus } = require('./updatecheck');
 
 const app = express();
 app.use(express.json({ limit: '1mb' })); // mod config edits can exceed the 100kb default
@@ -95,8 +96,9 @@ app.get('/api/servers', wrap(async (req, res) => {
   const { servers } = loadServers();
   const out = await Promise.all(servers.map(async (s) => {
     const state = await dockerctl.containerState(s.containerName);
-    let info = null, metrics = null, paused = false;
+    let info = null, metrics = null, paused = false, update = null;
     if (state.status === 'running') {
+      update = await updateStatus(s.containerName, state.startedAt).catch(() => null);
       try {
         const api = new PalApi(s);
         [info, metrics] = await Promise.all([api.info(), api.metrics()]);
@@ -110,7 +112,7 @@ app.get('/api/servers', wrap(async (req, res) => {
     }
     const pendingMods = mods.pendingModChanges(s, state.startedAt);
     return {
-      id: s.id, name: s.name, container: state, info, metrics, paused, apiUrl: s.apiUrl,
+      id: s.id, name: s.name, container: state, info, metrics, paused, update, apiUrl: s.apiUrl,
       pendingModChanges: pendingMods.length,
       flavor: s.flavor || 'thijsvanloef', provisioned: Boolean(s.provisioned), gamePort: s.gamePort,
     };

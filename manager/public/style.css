@@ -309,6 +309,7 @@ pre.logs {
 .mod-card .stats { font-size: .7rem; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
 .mod-card .actions { display: flex; gap: 8px; margin-top: auto; padding-top: 8px; }
 .badge.warn { border-color: #5c4d1a; color: var(--amber); }
+.warn-text { color: var(--amber); }
 .tag { font-size: .65rem; background: var(--panel2); border-radius: 4px; padding: 1px 6px; color: var(--muted); }
 .pager { display: flex; gap: 8px; align-items: center; margin: 14px 0; }
 

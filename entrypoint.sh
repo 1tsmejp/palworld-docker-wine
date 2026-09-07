@@ -149,6 +149,59 @@ if [ "${DISABLE_GENERATE_SETTINGS,,}" != "true" ]; then
   } > "$WIN_CFG_DIR/PalWorldSettings.ini"
 fi
 
+# ---------------------------------------------------------------- mod safe-mode
+# A Palworld build update can leave the modded stack (UE4SS/PalSchema/pak mods)
+# incompatible with the new engine and hang the server during world load — the
+# game process runs but never binds its ports / REST API. To keep the community
+# server reachable across such an update, a boot watchdog (defined below) waits
+# for the REST API; if it never answers within MOD_WATCHDOG_TIMEOUT with mods
+# active, it flips on SAFE MODE: the mod sources/runtime/pak mods are stashed
+# aside and the server reboots VANILLA, with a Discord alert. Safe mode is a
+# single marker file ($SAFE_MARKER) — remove it to restore the mods on the next
+# boot (the manager exposes this as a toggle).
+SAFE_MARKER="$SERVER_DIR/.mods_safe_mode"
+SAFE_HOLD="$SERVER_DIR/.mods_safe_hold"
+MODS_ROOT="$EXE_DIR/Mods"
+PAKS_DIR="$SERVER_DIR/Pal/Content/Paks"
+
+mods_present() {   # true when a mod source/runtime/pak is in place (mods active)
+  [ -d "$MODS_ROOT/Workshop" ] || [ -d "$MODS_ROOT/NativeMods" ] || \
+  [ -d "$PAKS_DIR/~mods" ] || [ -d "$PAKS_DIR/~WorkshopMods" ] || [ -d "$PAKS_DIR/LogicMods" ]
+}
+mods_stash() {     # move mod sources + runtime + pak mods into SAFE_HOLD (idempotent)
+  mkdir -p "$SAFE_HOLD/Mods" "$SAFE_HOLD/Paks"
+  local d
+  for d in Workshop NativeMods ManagedMods; do
+    [ -e "$MODS_ROOT/$d" ] && mv "$MODS_ROOT/$d" "$SAFE_HOLD/Mods/$d"
+  done
+  for d in '~mods' '~WorkshopMods' LogicMods; do
+    [ -e "$PAKS_DIR/$d" ] && mv "$PAKS_DIR/$d" "$SAFE_HOLD/Paks/$(basename "$d")"
+  done
+  return 0   # never let an empty-source stash trip `set -e`
+}
+mods_restore() {   # move mods back from SAFE_HOLD (idempotent)
+  [ -d "$SAFE_HOLD" ] || return 0
+  local d b
+  for d in "$SAFE_HOLD/Mods"/* "$SAFE_HOLD/Paks"/*; do
+    [ -e "$d" ] || continue
+    case "$d" in
+      "$SAFE_HOLD/Mods/"*) b="$MODS_ROOT/$(basename "$d")" ;;
+      "$SAFE_HOLD/Paks/"*) b="$PAKS_DIR/$(basename "$d")" ;;
+      *) continue ;;
+    esac
+    rm -rf "$b" 2>/dev/null; mv "$d" "$b"
+  done
+  rmdir "$SAFE_HOLD/Mods" "$SAFE_HOLD/Paks" "$SAFE_HOLD" 2>/dev/null || true
+  return 0
+}
+
+if [ -f "$SAFE_MARKER" ]; then
+  log "MOD SAFE MODE active — booting VANILLA; mods stashed in $SAFE_HOLD. Remove $SAFE_MARKER to restore mods."
+  mods_stash || true
+  discord_send MOD_SAFE_MODE_BOOT 'Server booting in SAFE MODE (mods disabled after an update problem).'
+else
+  mods_restore || true
+
 # ---------------------------------------------------------------- official mod system
 # docs.palworldgame.com/settings-and-operation/mod — Windows servers load mods
 # from Mods/ next to the executable, enabled via Mods/PalModSettings.ini.
@@ -218,6 +271,7 @@ if [ -n "${WORKSHOP_MODS:-}" ]; then
     cp -r "$HOME/.local/share/IsolatedStorage" /palworld/.depotdownloader/
   fi
 fi
+fi   # end: mod setup runs only when NOT in safe mode
 
 # ---------------------------------------------------------------- run under wine
 cleanup() {
@@ -225,6 +279,7 @@ cleanup() {
   discord_send PRE_SHUTDOWN 'Server is shutting down...'
   [ -n "${MONITOR_PID:-}" ] && kill "$MONITOR_PID" 2>/dev/null
   [ -n "${UPDATER_PID:-}" ] && kill "$UPDATER_PID" 2>/dev/null
+  [ -n "${WATCHDOG_PID:-}" ] && kill "$WATCHDOG_PID" 2>/dev/null
   # a paused (SIGSTOPped) game can't handle shutdown — resume it first
   pkill -CONT -f 'PalServer-Win64-Shipping-Cmd.exe' 2>/dev/null || true
   wineserver -k || true
@@ -233,6 +288,29 @@ cleanup() {
   exit 0
 }
 trap cleanup SIGTERM SIGINT
+
+# ---------------------------------------------------------------- mod watchdog
+# Runs once per boot when mods are active. Waits for the REST API to come up;
+# if it never does within MOD_WATCHDOG_TIMEOUT (a Palworld update outran the
+# mods), it turns on safe mode and kills wine so the restart policy reboots the
+# container VANILLA — the server comes back for players instead of hanging.
+mod_watchdog() {
+  set +e  # never let the watchdog die on a transient command failure
+  local timeout="${MOD_WATCHDOG_TIMEOUT:-420}" interval=15 waited=0
+  local rest="http://127.0.0.1:${REST_API_PORT:-8212}/v1/api"
+  while [ "$waited" -lt "$timeout" ]; do
+    sleep "$interval"; waited=$((waited + interval))
+    if curl -sf -m 5 -u "admin:${REST_ADMIN_PASSWORD}" "$rest/info" >/dev/null 2>&1; then
+      log "mod-watchdog: REST API up after ${waited}s — modded boot healthy."
+      return 0
+    fi
+  done
+  log "mod-watchdog: REST API did not respond within ${timeout}s with mods active — enabling SAFE MODE and restarting (vanilla)."
+  discord_send MOD_SAFE_MODE "⚠️ Modded server did not come online within $((timeout / 60)) min after a restart/update — UE4SS/PalSchema is likely behind the current Palworld build. Switching to SAFE MODE (vanilla) so you can play; update the mods, then clear safe mode to re-enable them."
+  touch "$SAFE_MARKER"
+  pkill -CONT -f 'PalServer-Win64-Shipping-Cmd.exe' 2>/dev/null || true
+  wineserver -k 2>/dev/null || true
+}
 
 # ---------------------------------------------------------------- monitor: discord join/leave + auto pause
 # Polls the REST API for the player list. Feeds two features:
@@ -349,6 +427,9 @@ update_check_loop() {
 WINE_BIN=$(command -v wine64 || command -v wine)
 
 # Persistent virtual display (matches ripps818's proven setup)
+# Clear any stale X lock from a previous container life — otherwise Xvfb aborts
+# with "Server is already active for display" after a quick restart.
+rm -f "/tmp/.X${DISPLAY#:}-lock" "/tmp/.X11-unix/X${DISPLAY#:}" 2>/dev/null || true
 log "Starting Xvfb on $DISPLAY…"
 Xvfb "$DISPLAY" -ac -nolisten tcp -screen 0 640x480x8 &
 
@@ -395,5 +476,13 @@ if [ "${AUTO_UPDATE_ENABLED,,}" = "true" ]; then
   else
     log "auto-update NOT started — needs UPDATE_ON_BOOT=true, REST_API_ENABLED=True and ADMIN_PASSWORD"
   fi
+fi
+# Mod boot watchdog: only with mods active, REST reachable, and not already in
+# safe mode. Falls back to a vanilla reboot if the modded boot never binds.
+if [ ! -f "$SAFE_MARKER" ] && [ "${MOD_WATCHDOG_ENABLED:-true}" = "true" ] \
+   && [ "${REST_API_ENABLED,,}" = "true" ] && [ -n "$REST_ADMIN_PASSWORD" ] && mods_present; then
+  mod_watchdog &
+  WATCHDOG_PID=$!
+  log "mod-watchdog started (timeout ${MOD_WATCHDOG_TIMEOUT:-420}s) — vanilla fallback armed."
 fi
 wait $SERVER_PID

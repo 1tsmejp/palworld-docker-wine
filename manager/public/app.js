@@ -192,6 +192,7 @@ function renderTopbar() {
     ${s.paused ? '<span class="badge warn">⏸ paused (auto-pause)</span>' : `<span class="badge ${api_ ? 'ok' : 'err'}">REST ${api_ ? 'connected' : 'unreachable'}</span>`}
     ${api_ ? `<span class="badge">version <b>${esc(api_.version)}</b></span>` : ''}
     ${s.update && s.update.available ? `<span class="badge warn" title="installed build ${esc(s.update.current)} — Steam has build ${esc(s.update.latest)}. Auto-update will apply it, or restart the server to update now.">⬆ update pending</span>` : ''}
+    ${s.modsSafeMode ? `<span class="badge err" title="A modded boot failed to come online after a game update, so the server auto-reverted to VANILLA (mods stashed aside, not deleted). Open the Mods tab to restore them once they're updated for the current build.">🛡 SAFE MODE — mods off</span>` : ''}
     ${s.metrics ? `<span class="badge">FPS <b>${s.metrics.serverfps}</b></span>
     <span class="badge">uptime <b>${fmtUptime(s.metrics.uptime)}</b></span>
     <span class="badge">day <b>${s.metrics.days}</b></span>` : ''}`;
@@ -828,6 +829,18 @@ function fmtBytes(n) {
 
 async function renderMods(v, s) {
   v.innerHTML = `
+    ${s.modsSafeMode ? `
+    <div class="card" style="border-color:#5c2626">
+      <h3>🛡 Safe mode — mods are disabled</h3>
+      <p class="muted" style="font-size:.8rem;margin-bottom:10px">
+        A modded boot didn't come online after a game update, so the server automatically reverted to
+        <b>vanilla</b> to stay reachable for players. The mods are <b>stashed, not deleted</b>. Once they've been
+        updated for the current game build (re-install them from below to pull the latest versions), click
+        Restore to bring them back and restart. If they still fail to launch, the server falls back to safe
+        mode again on its own.
+      </p>
+      <button class="btn primary" id="exit-safe-mode">Restore mods &amp; exit safe mode</button>
+    </div>` : ''}
     <div class="drift-banner" id="mods-platform-banner">
       ℹ️ <b>Linux server mod support:</b> only <b>pak-format</b> mods work on this server.
       Palworld's official Workshop mod system (UE4SS / Lua / PalSchema types) is Windows-only —
@@ -1035,6 +1048,21 @@ async function renderMods(v, s) {
       $('#steam-qr-hint').innerHTML = `<span class="val-bad">${esc(e.message)}</span>`;
     }
   };
+
+  {
+    const exitBtn = $('#exit-safe-mode');
+    if (exitBtn) exitBtn.onclick = async () => {
+      exitBtn.disabled = true; exitBtn.textContent = 'Restoring mods & restarting…';
+      try {
+        await api(`/servers/${s.id}/mods/safe-mode`, { method: 'POST', body: { enabled: false } });
+        toast('Exiting safe mode — mods restored, server restarting. It may take a few minutes to come back.', 'ok');
+        setTimeout(refreshServers, 4000);
+      } catch (e) {
+        toast(e.message || 'Failed to exit safe mode', 'err');
+        exitBtn.disabled = false; exitBtn.textContent = 'Restore mods & exit safe mode';
+      }
+    };
+  }
 
   $('#steam-login').onclick = async () => {
     const username = $('#steam-user').value.trim();

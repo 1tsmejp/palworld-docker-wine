@@ -37,6 +37,10 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) palworld-manager';
 const MODS_DIR = '/palworld/Pal/Content/Paks/~mods';
 // Official mod system (Windows server builds, incl. Wine-hosted)
 const OFFICIAL_MODS_DIR = '/palworld/Pal/Binaries/Win64/Mods';
+// Marker the Wine entrypoint's mod-watchdog drops when a modded boot never
+// binds (a game update outran the mods); its presence means the server booted
+// VANILLA with the mods stashed aside. Clearing it + restarting restores them.
+const SAFE_MODE_MARKER = '/palworld/.mods_safe_mode';
 
 /**
  * 'windows' (server runs the Windows build, e.g. under Wine): ALL mod types
@@ -740,9 +744,40 @@ async function writeModConfig(server, dir, kind, rel, content) {
   return { ok: true, backup: `${rel}.mgr-bak`, deployedSync, restartRequired: true };
 }
 
+/**
+ * Mod safe-mode (Wine servers). The game entrypoint's watchdog stashes the
+ * mods and reboots vanilla if a modded boot never comes up after an update,
+ * leaving SAFE_MODE_MARKER behind. These let the manager show that state and
+ * toggle it.
+ */
+async function readSafeMode(server) {
+  try {
+    const out = await dockerctl.exec(server.containerName,
+      ['sh', '-c', `[ -f ${SAFE_MODE_MARKER} ] && echo 1 || echo 0`], 15000);
+    return out.trim() === '1';
+  } catch { return false; } // container mid-boot / not running
+}
+
+/** Clear safe-mode and restart so the entrypoint restores the mods. */
+async function exitSafeMode(server) {
+  await dockerctl.exec(server.containerName, ['sh', '-c', `rm -f ${SAFE_MODE_MARKER}`]);
+  logModChange(server, 'exit-safe-mode', 'safe-mode', 'Exit safe mode — restore mods', 'system');
+  await dockerctl.composeRestart(server);
+  return { ok: true, safeMode: false };
+}
+
+/** Force safe-mode on and restart so the entrypoint boots vanilla. */
+async function enterSafeMode(server) {
+  await dockerctl.exec(server.containerName, ['sh', '-c', `touch ${SAFE_MODE_MARKER}`]);
+  logModChange(server, 'enter-safe-mode', 'safe-mode', 'Enter safe mode — disable mods', 'system');
+  await dockerctl.composeRestart(server);
+  return { ok: true, safeMode: true };
+}
+
 module.exports = {
   searchWorkshop, getDetails, listInstalled, installFromWorkshop, installFromUpload, removeMod,
   steamCreds, testSteamLogin, validateNexusKey, nexusBrowse, installFromNexus,
   startQrLogin, qrLoginStatus, modPlatform, readStoredSteamUsername, pendingModChanges,
   listModConfigs, readModConfig, writeModConfig,
+  readSafeMode, exitSafeMode, enterSafeMode,
 };

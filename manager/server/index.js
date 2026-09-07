@@ -96,9 +96,10 @@ app.get('/api/servers', wrap(async (req, res) => {
   const { servers } = loadServers();
   const out = await Promise.all(servers.map(async (s) => {
     const state = await dockerctl.containerState(s.containerName);
-    let info = null, metrics = null, paused = false, update = null;
+    let info = null, metrics = null, paused = false, update = null, safeMode = false;
     if (state.status === 'running') {
       update = await updateStatus(s.containerName, state.startedAt).catch(() => null);
+      safeMode = await mods.readSafeMode(s).catch(() => false);
       try {
         const api = new PalApi(s);
         [info, metrics] = await Promise.all([api.info(), api.metrics()]);
@@ -113,7 +114,7 @@ app.get('/api/servers', wrap(async (req, res) => {
     const pendingMods = mods.pendingModChanges(s, state.startedAt);
     return {
       id: s.id, name: s.name, container: state, info, metrics, paused, update, apiUrl: s.apiUrl,
-      pendingModChanges: pendingMods.length,
+      pendingModChanges: pendingMods.length, modsSafeMode: safeMode,
       flavor: s.flavor || 'thijsvanloef', provisioned: Boolean(s.provisioned), gamePort: s.gamePort,
     };
   }));
@@ -347,6 +348,14 @@ app.get('/api/servers/:id/mods', wrap(async (req, res) => {
 app.post('/api/servers/:id/mods/install', wrap(async (req, res) => {
   const server = getServer(req.params.id);
   res.json(await mods.installFromWorkshop(server, req.body.id));
+}));
+
+// Toggle mod safe-mode (Wine servers): { enabled: true } forces vanilla,
+// { enabled: false } clears it and restarts to restore the mods.
+app.post('/api/servers/:id/mods/safe-mode', wrap(async (req, res) => {
+  const server = getServer(req.params.id);
+  const enabled = Boolean(req.body && req.body.enabled === true);
+  res.json(enabled ? await mods.enterSafeMode(server) : await mods.exitSafeMode(server));
 }));
 
 app.post('/api/servers/:id/mods/upload', express.raw({ type: '*/*', limit: '500mb' }), wrap(async (req, res) => {

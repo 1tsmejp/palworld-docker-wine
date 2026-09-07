@@ -848,6 +848,17 @@ async function renderMods(v, s) {
       <span class="mono">Pal/Content/Paks/~mods</span> and take effect after a server restart.
     </div>
     <div class="card">
+      <h3>🧪 Test mods safely (staging copy)</h3>
+      <p class="muted" style="font-size:.78rem;margin-bottom:10px">
+        Clones this server's world to a <b>throwaway instance</b> and boots it with the current mods
+        (watchdog off) to check whether they actually launch on the current game build — <b>without touching
+        this live server</b>. Takes several minutes; the copy is deleted afterwards. Use it after a game or
+        mod update, before restoring mods here.
+      </p>
+      <button class="btn" id="mods-test-btn">Run staging mod test</button>
+      <div id="mods-test-out" class="mono" style="margin-top:10px;font-size:.72rem;white-space:pre-wrap;max-height:220px;overflow:auto;color:var(--muted)"></div>
+    </div>
+    <div class="card">
       <h3>Accounts for mod deployment</h3>
       <div class="deploy-cols">
         <div>
@@ -1048,6 +1059,54 @@ async function renderMods(v, s) {
       $('#steam-qr-hint').innerHTML = `<span class="val-bad">${esc(e.message)}</span>`;
     }
   };
+
+  {
+    const testBtn = $('#mods-test-btn');
+    const testOut = $('#mods-test-out');
+    let testPoll = null;
+    const renderTest = (st) => {
+      if (!testOut || !st) return;
+      const lines = (st.steps || []).map((x) => x.msg);
+      let tail = '';
+      if (!st.running && st.verdict) {
+        tail = st.verdict === 'pass'
+          ? '\n\n✅ RESULT: the current mods LAUNCH on this build — safe to restore them on this server.'
+          : st.verdict === 'error'
+            ? `\n\n⚠️ RESULT: test could not complete — ${st.error || 'see steps above'}.`
+            : '\n\n❌ RESULT: the current mods do NOT launch on this build yet. Leave this server vanilla / in safe mode until the mods are updated.';
+      }
+      testOut.textContent = lines.join('\n') + tail;
+      testOut.scrollTop = testOut.scrollHeight;
+    };
+    const stopPoll = () => { if (testPoll) { clearInterval(testPoll); testPoll = null; } if (testBtn) { testBtn.disabled = false; testBtn.textContent = 'Run staging mod test'; } };
+    const pollTest = async () => {
+      try {
+        const st = await api(`/servers/${s.id}/mods/test`);
+        renderTest(st);
+        if (!st.running) stopPoll();
+      } catch { /* transient — keep polling */ }
+    };
+    if (testBtn) testBtn.onclick = async () => {
+      testBtn.disabled = true; testBtn.textContent = 'Testing… (several minutes)';
+      if (testOut) testOut.textContent = 'Starting…';
+      try {
+        await api(`/servers/${s.id}/mods/test`, { method: 'POST', body: {} });
+        if (!testPoll) testPoll = setInterval(pollTest, 4000);
+        pollTest();
+      } catch (e) {
+        toast(e.message || 'failed to start test', 'err');
+        stopPoll();
+      }
+    };
+    // resume if a test is already running (e.g. tab re-opened)
+    api(`/servers/${s.id}/mods/test`).then((st) => {
+      if (st && st.running) {
+        if (testBtn) { testBtn.disabled = true; testBtn.textContent = 'Testing… (several minutes)'; }
+        renderTest(st);
+        testPoll = setInterval(pollTest, 4000);
+      }
+    }).catch(() => {});
+  }
 
   {
     const exitBtn = $('#exit-safe-mode');

@@ -9,6 +9,7 @@ const mods = require('./mods');
 const { readEnv } = require('./compose');
 const { setSecrets, secretsStatus } = require('./secrets');
 const { updateStatus } = require('./updatecheck');
+const stagingtest = require('./stagingtest');
 
 const app = express();
 app.use(express.json({ limit: '1mb' })); // mod config edits can exceed the 100kb default
@@ -356,6 +357,18 @@ app.post('/api/servers/:id/mods/safe-mode', wrap(async (req, res) => {
   const server = getServer(req.params.id);
   const enabled = Boolean(req.body && req.body.enabled === true);
   res.json(enabled ? await mods.enterSafeMode(server) : await mods.exitSafeMode(server));
+}));
+
+// Staging mod test: clone the world to a throwaway instance and boot it with
+// mods on / watchdog off to see if the current mods launch — without touching
+// production. Poll the GET for progress + verdict.
+app.post('/api/servers/:id/mods/test', wrap(async (req, res) => {
+  const server = getServer(req.params.id);
+  res.json(stagingtest.startTest(server));
+}));
+app.get('/api/servers/:id/mods/test', wrap(async (req, res) => {
+  getServer(req.params.id);
+  res.json(stagingtest.status());
 }));
 
 app.post('/api/servers/:id/mods/upload', express.raw({ type: '*/*', limit: '500mb' }), wrap(async (req, res) => {
